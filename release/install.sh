@@ -182,7 +182,7 @@ install_next_server() {
       cp rulelist /etc/next-server/
   fi
 
-  curl -o /usr/bin/next-server -Ls https://github.com/The-NeXT-Project/NeXT-Server/raw/main/release/next-server.sh
+  curl -o /usr/bin/next-server -Ls https://github.com/ShadowRhythm/NeXT-Server/raw/main/release/next-server.sh
   chmod +x /usr/bin/next-server
   cd $cur_dir
   rm -f install.sh
