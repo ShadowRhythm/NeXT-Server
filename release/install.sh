@@ -143,7 +143,7 @@ install_next_server() {
   chmod +x next-server
   mkdir /etc/next-server/ -p
   rm /etc/systemd/system/next-server.service -f
-  file="https://github.comThe-NeXT-Project/mirror/raw/main/next-server/next-server.service"
+  file="https://github.com/The-NeXT-Project/mirror/raw/main/next-server/next-server.service"
   wget -q -O /etc/systemd/system/next-server.service ${file}
   systemctl daemon-reload
   systemctl stop next-server
