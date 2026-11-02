@@ -112,13 +112,13 @@ install_next_server() {
 	cd /usr/local/next-server/
 
   if  [ $# == 0 ] ;then
-      last_version=$(curl -Ls "https://api.github.com/repos/The-NeXT-Project/NeXT-Server/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+      last_version=$(curl -Ls "https://api.github.com/repos/ascccx/NeXT-Server/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
       if [[ ! -n "$last_version" ]]; then
           echo -e "检测 next-server 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 next-server 版本安装"
           exit 1
       fi
       echo -e "检测到 next-server 最新版本：${last_version}，开始安装"
-      wget -q -O /usr/local/next-server/next-server-linux.zip https://github.com/The-NeXT-Project/NeXT-Server/releases/download/${last_version}/next-server-linux-${arch}.zip
+      wget -q -O /usr/local/next-server/next-server-linux.zip https://github.com/ascccx/NeXT-Server/releases/download/${last_version}/next-server-linux-${arch}.zip
       if [[ $? -ne 0 ]]; then
           echo -e "下载 next-server 失败，请确保你的服务器能够下载 Github 的文件"
           exit 1
@@ -129,7 +129,7 @@ install_next_server() {
       else
 	        last_version="v"$1
 	    fi
-      url="https://github.com/The-NeXT-Project/NeXT-Server/releases/download/${last_version}/next-server-linux-${arch}.zip"
+      url="https://github.com/ascccx/NeXT-Server/releases/download/${last_version}/next-server-linux-${arch}.zip"
       echo -e "开始安装 next-server ${last_version}"
       wget -q -O /usr/local/next-server/next-server-linux.zip ${url}
       if [[ $? -ne 0 ]]; then
