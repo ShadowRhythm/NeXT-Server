@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/The-NeXT-Project/NeXT-Server/adapter"
+	"github.com/The-NeXT-Project/NeXT-Server/constant"
 	"github.com/The-NeXT-Project/NeXT-Server/option"
 
 	boxOption "github.com/sagernet/sing-box/option"
@@ -156,7 +157,10 @@ func (c *Client) do(request *http.Request, data any) (*http.Response, error) {
 }
 
 func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) error {
-	return c.send(ctx, http.MethodPut, "/heartbeat", map[string]any{"online_user": onlineUsers})
+	return c.send(ctx, http.MethodPut, "/heartbeat", map[string]any{
+		"online_user": onlineUsers,
+		"version":     constant.Version,
+	})
 }
 
 func (c *Client) ReportTraffic(ctx context.Context, items []adapter.UserTraffic) error {
