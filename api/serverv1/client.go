@@ -156,35 +156,39 @@ func (c *Client) do(request *http.Request, data any) (*http.Response, error) {
 	return response, nil
 }
 
-func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (bool, error) {
+func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (adapter.HeartbeatResponse, error) {
 	content, err := json.Marshal(map[string]any{
 		"online_user": onlineUsers,
 		"version":     constant.Version,
 	})
 	if err != nil {
-		return false, err
+		return adapter.HeartbeatResponse{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+"/heartbeat", bytes.NewReader(content))
 	if err != nil {
-		return false, err
+		return adapter.HeartbeatResponse{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+c.key)
 	request.Header.Set("Accept", "application/json")
 	resp, err := c.httpClient.Do(request)
 	if err != nil {
-		return false, E.Cause(err, "PUT /heartbeat")
+		return adapter.HeartbeatResponse{}, E.Cause(err, "PUT /heartbeat")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, E.New("PUT /heartbeat: HTTP ", http.StatusText(resp.StatusCode))
+		return adapter.HeartbeatResponse{}, E.New("PUT /heartbeat: HTTP ", http.StatusText(resp.StatusCode))
 	}
 	var result struct {
 		Upgrade bool `json:"upgrade"`
+		Restart bool `json:"restart"`
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	_ = json.Unmarshal(body, &result)
-	return result.Upgrade, nil
+	return adapter.HeartbeatResponse{
+		Upgrade: result.Upgrade,
+		Restart: result.Restart,
+	}, nil
 }
 
 func (c *Client) ReportTraffic(ctx context.Context, items []adapter.UserTraffic) error {

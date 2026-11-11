@@ -135,12 +135,14 @@ func (s *Server) Start() error {
 	go s.loop(s.pullInterval, s.pullOnce)
 	go s.loop(s.pushInterval, s.pushOnce)
 	go func() {
-		shouldUpgrade, err := s.api.Heartbeat(s.ctx, 0)
+		hb, err := s.api.Heartbeat(s.ctx, 0)
 		if err != nil && !E.IsClosedOrCanceled(err) {
 			s.logger.Error("heartbeat: ", err)
 		}
-		if shouldUpgrade {
+		if hb.Upgrade {
 			s.triggerUpgrade()
+		} else if hb.Restart {
+			s.triggerRestart()
 		}
 	}()
 	return nil
@@ -309,10 +311,12 @@ func (s *Server) pushOnce() {
 			online = append(online, adapter.UserOnline{UserID: id, IP: M.SocksaddrFrom(address, 0).AddrString()})
 		}
 	}
-	shouldUpgrade, heartbeatErr := s.api.Heartbeat(s.ctx, onlineUsers)
+	hb, heartbeatErr := s.api.Heartbeat(s.ctx, onlineUsers)
 	s.logError("heartbeat", heartbeatErr)
-	if shouldUpgrade {
+	if hb.Upgrade {
 		s.triggerUpgrade()
+	} else if hb.Restart {
+		s.triggerRestart()
 	}
 
 	if traffic := s.users.collectTraffic(); len(traffic) > 0 {
@@ -343,5 +347,11 @@ func (s *Server) triggerUpgrade() {
 		return
 	}
 	s.logger.Info("upgrade complete, exiting for restart...")
-	os.Exit(0)
+	os.Exit(1)
+}
+
+// triggerRestart exits the process so systemd will restart it.
+func (s *Server) triggerRestart() {
+	s.logger.Info("restart requested by panel, exiting for restart...")
+	os.Exit(1)
 }

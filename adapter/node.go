@@ -123,13 +123,18 @@ type DetectLog struct {
 	RuleID int
 }
 
+type HeartbeatResponse struct {
+	Upgrade bool
+	Restart bool
+}
+
 // APIClient talks to the panel. The Fetch methods return (nil, nil) when the
 // resource is unchanged since the last successful fetch.
 type APIClient interface {
 	FetchNodeConfig(ctx context.Context) (*NodeConfig, error)
 	FetchUsers(ctx context.Context) ([]User, error)
 	FetchDetectRules(ctx context.Context) ([]DetectRule, error)
-	Heartbeat(ctx context.Context, onlineUsers int) (bool, error)
+	Heartbeat(ctx context.Context, onlineUsers int) (HeartbeatResponse, error)
 	ReportTraffic(ctx context.Context, items []UserTraffic) error
 	ReportOnline(ctx context.Context, items []UserOnline) error
 	ReportDetectLogs(ctx context.Context, items []DetectLog) error
