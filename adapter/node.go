@@ -129,7 +129,7 @@ type APIClient interface {
 	FetchNodeConfig(ctx context.Context) (*NodeConfig, error)
 	FetchUsers(ctx context.Context) ([]User, error)
 	FetchDetectRules(ctx context.Context) ([]DetectRule, error)
-	Heartbeat(ctx context.Context, onlineUsers int) error
+	Heartbeat(ctx context.Context, onlineUsers int) (bool, error)
 	ReportTraffic(ctx context.Context, items []UserTraffic) error
 	ReportOnline(ctx context.Context, items []UserOnline) error
 	ReportDetectLogs(ctx context.Context, items []DetectLog) error

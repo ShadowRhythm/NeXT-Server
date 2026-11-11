@@ -3,6 +3,7 @@ package nextserver
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/The-NeXT-Project/NeXT-Server/option"
 	"github.com/The-NeXT-Project/NeXT-Server/proxy"
 	"github.com/The-NeXT-Project/NeXT-Server/proxy/inbound"
+	"github.com/The-NeXT-Project/NeXT-Server/update"
 
 	boxAdapter "github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -133,9 +135,12 @@ func (s *Server) Start() error {
 	go s.loop(s.pullInterval, s.pullOnce)
 	go s.loop(s.pushInterval, s.pushOnce)
 	go func() {
-		err := s.api.Heartbeat(s.ctx, 0)
+		shouldUpgrade, err := s.api.Heartbeat(s.ctx, 0)
 		if err != nil && !E.IsClosedOrCanceled(err) {
 			s.logger.Error("heartbeat: ", err)
+		}
+		if shouldUpgrade {
+			s.triggerUpgrade()
 		}
 	}()
 	return nil
@@ -304,7 +309,11 @@ func (s *Server) pushOnce() {
 			online = append(online, adapter.UserOnline{UserID: id, IP: M.SocksaddrFrom(address, 0).AddrString()})
 		}
 	}
-	s.logError("heartbeat", s.api.Heartbeat(s.ctx, onlineUsers))
+	shouldUpgrade, heartbeatErr := s.api.Heartbeat(s.ctx, onlineUsers)
+	s.logError("heartbeat", heartbeatErr)
+	if shouldUpgrade {
+		s.triggerUpgrade()
+	}
 
 	if traffic := s.users.collectTraffic(); len(traffic) > 0 {
 		err := s.api.ReportTraffic(s.ctx, traffic)
@@ -323,4 +332,16 @@ func (s *Server) pushOnce() {
 			s.logError("report detect logs", err)
 		}
 	}
+}
+
+// triggerUpgrade downloads the latest release and replaces the running binary,
+// then exits so the process manager (systemd) restarts it.
+func (s *Server) triggerUpgrade() {
+	s.logger.Info("upgrade requested by panel, downloading latest release...")
+	if err := update.Do(s.ctx, "ShadowRhythm/NeXT-Server"); err != nil {
+		s.logger.Error("upgrade failed: ", err)
+		return
+	}
+	s.logger.Info("upgrade complete, exiting for restart...")
+	os.Exit(0)
 }

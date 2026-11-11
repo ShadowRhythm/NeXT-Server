@@ -156,11 +156,35 @@ func (c *Client) do(request *http.Request, data any) (*http.Response, error) {
 	return response, nil
 }
 
-func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) error {
-	return c.send(ctx, http.MethodPut, "/heartbeat", map[string]any{
+func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (bool, error) {
+	content, err := json.Marshal(map[string]any{
 		"online_user": onlineUsers,
 		"version":     constant.Version,
 	})
+	if err != nil {
+		return false, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+"/heartbeat", bytes.NewReader(content))
+	if err != nil {
+		return false, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+c.key)
+	request.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(request)
+	if err != nil {
+		return false, E.Cause(err, "PUT /heartbeat")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, E.New("PUT /heartbeat: HTTP ", http.StatusText(resp.StatusCode))
+	}
+	var result struct {
+		Upgrade bool `json:"upgrade"`
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	_ = json.Unmarshal(body, &result)
+	return result.Upgrade, nil
 }
 
 func (c *Client) ReportTraffic(ctx context.Context, items []adapter.UserTraffic) error {
