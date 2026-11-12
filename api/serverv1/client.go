@@ -16,7 +16,6 @@ import (
 	"github.com/The-NeXT-Project/NeXT-Server/constant"
 	"github.com/The-NeXT-Project/NeXT-Server/option"
 
-	boxOption "github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -46,7 +45,7 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	key        string
-	localTLS   *boxOption.InboundTLSOptions
+	localTLS   *option.InboundTLSOptions
 
 	// Fetches only happen on the pull goroutine, so the ETags need no lock.
 	infoETag  string

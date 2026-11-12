@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/The-NeXT-Project/NeXT-Server/adapter"
+	"github.com/The-NeXT-Project/NeXT-Server/option"
 
 	C "github.com/sagernet/sing-box/constant"
 	boxOption "github.com/sagernet/sing-box/option"
@@ -60,6 +61,28 @@ func TestParseNodeConfig(t *testing.T) {
 			t.Errorf("transport: %+v", transport)
 		}
 	})
+	t.Run("vmess with tls disabled", func(t *testing.T) {
+		disabled := false
+		clientWithDisabledTLS := &Client{localTLS: &option.InboundTLSOptions{Enabled: &disabled}}
+		config, err := parse(t, clientWithDisabledTLS, `{"sort":11,"server":"1.2.3.4","custom_config":{"offset_port_node":8080,"network":"ws","security":"tls","host":"a.example","path":"/ws"}}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.TLS != nil {
+			t.Errorf("expected TLS to be nil, got: %+v", config.TLS)
+		}
+		if config.Transport == nil || config.Transport.Type != C.V2RayTransportTypeWebsocket || config.Transport.WebsocketOptions.Path != "/ws" {
+			t.Errorf("unexpected transport: %+v", config.Transport)
+		}
+	})
+	t.Run("trojan with tls disabled returns error", func(t *testing.T) {
+		disabled := false
+		clientWithDisabledTLS := &Client{localTLS: &option.InboundTLSOptions{Enabled: &disabled}}
+		_, err := parse(t, clientWithDisabledTLS, `{"sort":14,"server":"node.example.com","custom_config":{"offset_port_node":443}}`)
+		if err == nil {
+			t.Fatal("expected error when TLS is disabled on trojan node")
+		}
+	})
 	t.Run("unknown network is plain tcp", func(t *testing.T) {
 		config, err := parse(t, client, `{"sort":14,"server":"1.2.3.4","custom_config":{"network":"kcp"}}`)
 		if err != nil {
@@ -101,9 +124,11 @@ func TestParseNodeConfig(t *testing.T) {
 
 func TestBuildTLS(t *testing.T) {
 	t.Run("acme takes the node host", func(t *testing.T) {
-		local := &boxOption.InboundTLSOptions{
-			//nolint:staticcheck
-			ACME: &boxOption.InboundACMEOptions{Email: "admin@example.com"},
+		local := &option.InboundTLSOptions{
+			InboundTLSOptions: boxOption.InboundTLSOptions{
+				//nolint:staticcheck
+				ACME: &boxOption.InboundACMEOptions{Email: "admin@example.com"},
+			},
 		}
 		client := &Client{localTLS: local}
 		options, err := client.buildTLS("node.example.com", nil)
@@ -123,13 +148,23 @@ func TestBuildTLS(t *testing.T) {
 		}
 	})
 	t.Run("certificate file is kept", func(t *testing.T) {
-		client := &Client{localTLS: &boxOption.InboundTLSOptions{CertificatePath: "c.pem", KeyPath: "k.pem", ServerName: "fixed.example"}}
+		client := &Client{localTLS: &option.InboundTLSOptions{
+			InboundTLSOptions: boxOption.InboundTLSOptions{CertificatePath: "c.pem", KeyPath: "k.pem", ServerName: "fixed.example"},
+		}}
 		options, err := client.buildTLS("node.example.com", []string{"h3"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if options.Insecure || options.ServerName != "fixed.example" || options.ALPN[0] != "h3" || !options.Enabled {
 			t.Errorf("%+v", options)
+		}
+	})
+	t.Run("disabled tls returns error in buildTLS", func(t *testing.T) {
+		disabled := false
+		client := &Client{localTLS: &option.InboundTLSOptions{Enabled: &disabled}}
+		_, err := client.buildTLS("node.example.com", nil)
+		if err == nil {
+			t.Error("expected error when TLS is disabled")
 		}
 	})
 }

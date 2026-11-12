@@ -57,6 +57,7 @@ The node listens on `offset_port_node`, falling back to `offset_port_user`, then
 
 TLS node types (TUIC, Hysteria2, AnyTLS, Trojan, and VMess with `"security": "tls"`) take their certificate from `tls`, which accepts the sing-box inbound TLS fields:
 
+- `enabled`: set to `false` to explicitly disable TLS (supported for VMess). Useful when the node is fronted by a reverse proxy (e.g. Nginx) that handles TLS termination.
 - `certificate_path` and `key_path`: a certificate on disk, reloaded when the files change.
 - `acme`: certificates from Let's Encrypt. Leave `domain` empty to use the node's `host` from the panel (or its address, if that is a domain). A client asking for a name the certificates do not cover gets the one for `default_server_name`, or the first `domain`, so a node behind a CDN (whose panel address is the CDN's name) keeps a renewed certificate: set `domain` to the node's own name.
 - Nothing: a self-signed certificate is generated, and clients connect only with `allow_insecure` set on the node.

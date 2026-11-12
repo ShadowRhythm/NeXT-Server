@@ -131,7 +131,7 @@ func (c *Client) parseNodeConfig(info nodeInfo) (*adapter.NodeConfig, error) {
 		config.TLS, err = c.buildTLS(serverName, nil)
 		config.AnyTLS.PaddingScheme = custom.PaddingScheme
 	case adapter.NodeTypeVMess:
-		if custom.Security == "tls" {
+		if custom.Security == "tls" && !c.isTLSDisabled() {
 			config.TLS, err = c.buildTLS(serverName, nil)
 		}
 		config.Transport = buildTransport(custom)
@@ -147,12 +147,19 @@ func (c *Client) parseNodeConfig(info nodeInfo) (*adapter.NodeConfig, error) {
 	return config, nil
 }
 
+func (c *Client) isTLSDisabled() bool {
+	return c.localTLS != nil && c.localTLS.IsDisabled()
+}
+
 // buildTLS merges the local certificate source with what the panel knows
 // about the node.
 func (c *Client) buildTLS(serverName string, alpn []string) (*boxOption.InboundTLSOptions, error) {
+	if c.isTLSDisabled() {
+		return nil, E.New("tls: TLS is explicitly disabled in server configuration")
+	}
 	var options boxOption.InboundTLSOptions
 	if c.localTLS != nil {
-		options = *c.localTLS
+		options = c.localTLS.InboundTLSOptions
 	}
 	options.Enabled = true
 	if options.ServerName == "" {

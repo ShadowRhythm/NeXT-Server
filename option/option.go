@@ -57,8 +57,9 @@ type ServerOptions struct {
 	// TLS is the certificate source for TLS node types: certificate_path and
 	// key_path, or acme. The panel's host fills in server_name and an empty
 	// acme domain. Without a certificate a self-signed one is generated, which
-	// clients only accept with allow_insecure.
-	TLS       *boxOption.InboundTLSOptions       `json:"tls,omitempty"`
+	// clients only accept with allow_insecure. Setting enabled to false disables
+	// TLS entirely (for VMess behind a reverse proxy).
+	TLS       *InboundTLSOptions                 `json:"tls,omitempty"`
 	Multiplex *boxOption.InboundMultiplexOptions `json:"multiplex,omitempty"`
 
 	Dialer     *boxOption.DialerOptions `json:"dialer,omitempty"`
@@ -69,4 +70,13 @@ type ServerOptions struct {
 	// cloud's metadata service), CGNAT, multicast and broadcast addresses,
 	// whether given directly or resolved from a domain. Refused by default.
 	AllowPrivateDestinations bool `json:"allow_private_destinations,omitempty"`
+}
+
+type InboundTLSOptions struct {
+	boxOption.InboundTLSOptions
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+func (o *InboundTLSOptions) IsDisabled() bool {
+	return o != nil && o.Enabled != nil && !*o.Enabled
 }

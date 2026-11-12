@@ -134,13 +134,13 @@ func TestACMECertificateForOtherNames(t *testing.T) {
 			panel, panelServer := newFakePanel(t, 14, map[string]any{"offset_port_node": port, "network": network, "path": "/ws"}, testUsers())
 			panel.update(func(p *fakePanel) { p.info["server"] = "cdn.example.net" })
 			startNextServer(t, panelServer.URL, func(options *option.ServerOptions) {
-				options.TLS = &boxOption.InboundTLSOptions{ACME: &boxOption.InboundACMEOptions{
+				options.TLS = &option.InboundTLSOptions{InboundTLSOptions: boxOption.InboundTLSOptions{ACME: &boxOption.InboundACMEOptions{
 					Domain:                  []string{"node.example.com"},
 					DataDirectory:           dataDirectory,
 					Email:                   "admin@example.com",
 					DisableHTTPChallenge:    true,
 					DisableTLSALPNChallenge: true,
-				}}
+				}}}
 			})
 			for _, serverName := range []string{"node.example.com", "cdn.example.net", ""} {
 				conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
