@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"regexp"
 
 	boxOption "github.com/sagernet/sing-box/option"
@@ -130,12 +131,23 @@ type HeartbeatResponse struct {
 
 // APIClient talks to the panel. The Fetch methods return (nil, nil) when the
 // resource is unchanged since the last successful fetch.
+//
+// ReportTraffic and ReportDetectLogs carry a report ID: a batch sent again
+// under the same ID is recorded once, however often the panel sees it.
 type APIClient interface {
 	FetchNodeConfig(ctx context.Context) (*NodeConfig, error)
 	FetchUsers(ctx context.Context) ([]User, error)
 	FetchDetectRules(ctx context.Context) ([]DetectRule, error)
 	Heartbeat(ctx context.Context, onlineUsers int) (HeartbeatResponse, error)
-	ReportTraffic(ctx context.Context, items []UserTraffic) error
+	ReportTraffic(ctx context.Context, reportID string, items []UserTraffic) error
 	ReportOnline(ctx context.Context, items []UserOnline) error
-	ReportDetectLogs(ctx context.Context, items []DetectLog) error
+	ReportDetectLogs(ctx context.Context, reportID string, items []DetectLog) error
+}
+
+// IsRefused reports whether err is the panel refusing a request, which it
+// does before acting on any of it, as opposed to a failure that leaves open
+// whether the panel acted on it.
+func IsRefused(err error) bool {
+	var refusal interface{ Refused() bool }
+	return errors.As(err, &refusal) && refusal.Refused()
 }
