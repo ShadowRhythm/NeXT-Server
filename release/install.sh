@@ -132,14 +132,14 @@ install_next_server() {
     fi
 
     # 解压二进制文件
-    tar -xzf next-server-linux.tar.gz
+    tar -xzf next-server-linux.tar.gz --strip-components=1 2>/dev/null || tar -xzf next-server-linux.tar.gz
     rm -f next-server-linux.tar.gz
 
-    # 如果解压出的二进制在子目录中，移出来（覆盖已有文件以支持更新）
-    find_bin=$(find /usr/local/next-server/ -name "next-server" -type f \
-        ! -path "/usr/local/next-server/next-server" | head -n 1)
+    # 如果解压出的二进制在子目录中，移出来并覆盖已有文件
+    find_bin=$(find /usr/local/next-server/ -mindepth 2 -name "next-server" -type f | head -n 1)
     if [[ -n "$find_bin" ]]; then
         mv -f "$find_bin" /usr/local/next-server/next-server
+        rm -rf "$(dirname "$find_bin")"
     fi
 
     if [[ ! -f /usr/local/next-server/next-server ]]; then
