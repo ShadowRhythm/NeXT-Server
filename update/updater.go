@@ -66,11 +66,27 @@ func Do(ctx context.Context, repo string) error {
 		return err
 	}
 
-	// Extract binary to another temp file
-	binTmp, err := os.CreateTemp("", "next-server-bin-*")
+	// Resolve the current executable path (follow symlinks)
+	exePath, err := os.Executable()
 	if err != nil {
-		dlTmp.Close()
-		return fmt.Errorf("create binary temp: %w", err)
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return fmt.Errorf("eval symlinks: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+
+	// Extract binary to a temp file in the same directory as exePath
+	// so that os.Rename is an atomic operation on the same filesystem.
+	binTmp, err := os.CreateTemp(exeDir, ".next-server-bin-*")
+	if err != nil {
+		// Fallback to default temp dir if exeDir is not writable for temp files
+		binTmp, err = os.CreateTemp("", "next-server-bin-*")
+		if err != nil {
+			dlTmp.Close()
+			return fmt.Errorf("create binary temp: %w", err)
+		}
 	}
 	binTmpName := binTmp.Name()
 	defer os.Remove(binTmpName)
@@ -90,16 +106,6 @@ func Do(ctx context.Context, repo string) error {
 		return fmt.Errorf("chmod binary: %w", err)
 	}
 	binTmp.Close()
-
-	// Resolve the current executable path (follow symlinks)
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve executable: %w", err)
-	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		return fmt.Errorf("eval symlinks: %w", err)
-	}
 
 	// Atomic replace: try rename first (works on same filesystem), then copy
 	if err := os.Rename(binTmpName, exePath); err != nil {
@@ -195,16 +201,61 @@ func extractBinaryFromTarGz(r io.Reader, dst io.Writer) error {
 }
 
 func copyReplace(src, dst string) error {
+	dstDir := filepath.Dir(dst)
+	// 1. Try to create a temp file in dstDir, copy src to it, and rename it over dst.
+	// Since temp file is in dstDir, rename will be on the same filesystem.
+	// In Linux, rename over a running binary succeeds (unlinking the old inode without ETXTBSY).
+	tmp, err := os.CreateTemp(dstDir, ".next-server-copy-*")
+	if err == nil {
+		tmpName := tmp.Name()
+		defer os.Remove(tmpName)
+
+		in, err := os.Open(src)
+		if err != nil {
+			tmp.Close()
+			return err
+		}
+		defer in.Close()
+
+		if _, err := io.Copy(tmp, in); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Chmod(0o755); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+
+		if err := os.Rename(tmpName, dst); err == nil {
+			return nil
+		}
+	}
+
+	// 2. If creating temp in dstDir or rename fails, remove dst first (unlink avoids ETXTBSY on running binary)
+	// Backup to dst.old first so we don't lose the binary if copy fails
+	backup := dst + ".old"
+	_ = os.Remove(backup)
+	if err := os.Rename(dst, backup); err == nil {
+		defer os.Remove(backup)
+	} else {
+		_ = os.Remove(dst)
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
+
 	_, err = io.Copy(out, in)
 	return err
 }
