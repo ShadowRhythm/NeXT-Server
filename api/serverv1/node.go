@@ -277,6 +277,11 @@ func (c *Client) FetchDetectRules(ctx context.Context) ([]adapter.DetectRule, er
 	result := make([]adapter.DetectRule, 0, len(rules))
 	var errs []error
 	for _, it := range rules {
+		ruleType := adapter.DetectRuleType(it.Type)
+		if ruleType != adapter.DetectRuleTypePlain && ruleType != adapter.DetectRuleTypeHex {
+			errs = append(errs, E.New("detect rule ", it.ID, ": unknown type ", it.Type))
+			continue
+		}
 		pattern, err := regexp.Compile(it.Regex)
 		if err != nil {
 			errs = append(errs, E.Cause(err, "detect rule ", it.ID))
@@ -284,7 +289,7 @@ func (c *Client) FetchDetectRules(ctx context.Context) ([]adapter.DetectRule, er
 		}
 		result = append(result, adapter.DetectRule{
 			ID:     it.ID,
-			Type:   adapter.DetectRuleType(it.Type),
+			Type:   ruleType,
 			Regexp: pattern,
 		})
 	}
