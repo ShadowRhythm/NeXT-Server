@@ -12,6 +12,23 @@
           "email": "admin@example.com",
           "data_directory": "/etc/next-server/acme"
         }
+      },
+      "abuse": {
+        "p2p": {
+          "rule_id": 11
+        },
+        "port_scan": {
+          "rule_id": 12
+        },
+        "flood": {
+          "rule_id": 13
+        },
+        "brute_force": {
+          "rule_id": 14
+        },
+        "blocked_ports": {
+          "rule_id": 15
+        }
       }
     }
   ]

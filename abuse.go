@@ -107,11 +107,11 @@ func newAbuseGuard(options *option.AbuseOptions, logger log.ContextLogger, audit
 		guard.limits.LoginHosts = orDefault(options.BruteForce.Hosts, constant.DefaultBruteForceHosts)
 		guard.limits.LoginConnectionsPerDestination = orDefault(options.BruteForce.ConnectionsPerDestination, constant.DefaultBruteForceConnectionsPerDestination)
 	}
-	guard.ruleIDs[abuse.P2P] = options.P2P.RuleID
-	guard.ruleIDs[abuse.BlockedPort] = options.BlockedPorts.RuleID
-	guard.ruleIDs[abuse.PortScan] = options.PortScan.RuleID
-	guard.ruleIDs[abuse.Flood] = options.Flood.RuleID
-	guard.ruleIDs[abuse.BruteForce] = options.BruteForce.RuleID
+	guard.ruleIDs[abuse.P2P] = orDefault(options.P2P.RuleID, constant.DefaultP2PRuleID)
+	guard.ruleIDs[abuse.BlockedPort] = orDefault(options.BlockedPorts.RuleID, constant.DefaultBlockedPortsRuleID)
+	guard.ruleIDs[abuse.PortScan] = orDefault(options.PortScan.RuleID, constant.DefaultPortScanRuleID)
+	guard.ruleIDs[abuse.Flood] = orDefault(options.Flood.RuleID, constant.DefaultFloodRuleID)
+	guard.ruleIDs[abuse.BruteForce] = orDefault(options.BruteForce.RuleID, constant.DefaultBruteForceRuleID)
 	return guard, nil
 }
 

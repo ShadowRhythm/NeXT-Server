@@ -32,6 +32,13 @@ const (
 	// AbuseNoticeInterval is how often one user's repeated hits of one kind
 	// are logged and reported to the panel.
 	AbuseNoticeInterval = time.Minute
+
+	// Default Abuse Rule IDs (reported to panel detect logs).
+	DefaultP2PRuleID          = 11
+	DefaultPortScanRuleID     = 12
+	DefaultFloodRuleID        = 13
+	DefaultBruteForceRuleID   = 14
+	DefaultBlockedPortsRuleID = 15
 )
 
 var (
