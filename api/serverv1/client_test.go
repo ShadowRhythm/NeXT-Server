@@ -83,9 +83,10 @@ func TestDetectRuleTypes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data": [
 			{"id": 1, "name": "plain", "text": "", "regex": "torrent", "type": 1},
-			{"id": 2, "name": "hex", "text": "", "regex": "^1603", "type": 0},
-			{"id": 3, "name": "unknown", "text": "", "regex": "x", "type": 7},
-			{"id": 4, "name": "broken", "text": "", "regex": "(", "type": 1}
+			{"id": 2, "name": "hex0", "text": "", "regex": "^1603", "type": 0},
+			{"id": 3, "name": "hex2", "text": "", "regex": "^beef", "type": 2},
+			{"id": 4, "name": "unknown", "text": "", "regex": "x", "type": 7},
+			{"id": 5, "name": "broken", "text": "", "regex": "(", "type": 1}
 		]}`))
 	}))
 	defer server.Close()
@@ -97,7 +98,7 @@ func TestDetectRuleTypes(t *testing.T) {
 	if err == nil {
 		t.Error("the unknown type and the broken regex were not reported")
 	}
-	if len(rules) != 2 || rules[0].Type != adapter.DetectRuleTypePlain || rules[1].Type != adapter.DetectRuleTypeHex {
+	if len(rules) != 3 || rules[0].Type != adapter.DetectRuleTypePlain || rules[1].Type != adapter.DetectRuleTypeHex || rules[2].Type != adapter.DetectRuleTypeHex {
 		t.Fatalf("rules: %+v", rules)
 	}
 }

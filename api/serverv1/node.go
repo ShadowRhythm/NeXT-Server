@@ -277,8 +277,14 @@ func (c *Client) FetchDetectRules(ctx context.Context) ([]adapter.DetectRule, er
 	result := make([]adapter.DetectRule, 0, len(rules))
 	var errs []error
 	for _, it := range rules {
-		ruleType := adapter.DetectRuleType(it.Type)
-		if ruleType != adapter.DetectRuleTypePlain && ruleType != adapter.DetectRuleTypeHex {
+		var ruleType adapter.DetectRuleType
+		switch it.Type {
+		case 1:
+			ruleType = adapter.DetectRuleTypePlain
+		case 0, 2:
+			// NeXT-Panel uses 0 for hex in some versions and 2 in others (standard SSPanel schema).
+			ruleType = adapter.DetectRuleTypeHex
+		default:
 			errs = append(errs, E.New("detect rule ", it.ID, ": unknown type ", it.Type))
 			continue
 		}
