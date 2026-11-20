@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	stdjson "encoding/json"
 	"errors"
 	"os"
 	"os/signal"
@@ -60,6 +61,7 @@ func main() {
 }
 
 func run() error {
+	ensureAbuseInConfig(configPath)
 	configContent, err := os.ReadFile(configPath)
 	if err != nil {
 		return E.Cause(err, "read configuration file")
@@ -112,4 +114,71 @@ func closeMonitor(ctx context.Context) {
 	default:
 	}
 	log.Fatal("next-server did not close!")
+}
+
+func ensureAbuseInConfig(path string) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var root map[string]any
+	decoder := json.NewDecoder(json.NewCommentFilter(bytes.NewReader(content)))
+	if err := decoder.Decode(&root); err != nil {
+		return
+	}
+	servers, ok := root["servers"].([]any)
+	if !ok || len(servers) == 0 {
+		return
+	}
+	changed := false
+	defaultRules := []struct {
+		name string
+		id   int
+	}{
+		{"p2p", constant.DefaultP2PRuleID},
+		{"port_scan", constant.DefaultPortScanRuleID},
+		{"flood", constant.DefaultFloodRuleID},
+		{"brute_force", constant.DefaultBruteForceRuleID},
+		{"blocked_ports", constant.DefaultBlockedPortsRuleID},
+		{"exploits", constant.DefaultExploitsRuleID},
+		{"mining", constant.DefaultMiningRuleID},
+	}
+
+	for _, s := range servers {
+		serverMap, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		abuseRaw, hasAbuse := serverMap["abuse"]
+		var abuseMap map[string]any
+		if !hasAbuse || abuseRaw == nil {
+			abuseMap = make(map[string]any)
+			serverMap["abuse"] = abuseMap
+			changed = true
+		} else if m, ok := abuseRaw.(map[string]any); ok {
+			abuseMap = m
+		} else {
+			continue
+		}
+
+		for _, rule := range defaultRules {
+			itemRaw, hasItem := abuseMap[rule.name]
+			if !hasItem || itemRaw == nil {
+				abuseMap[rule.name] = map[string]any{"rule_id": rule.id}
+				changed = true
+			} else if itemMap, ok := itemRaw.(map[string]any); ok {
+				if _, hasRuleID := itemMap["rule_id"]; !hasRuleID {
+					itemMap["rule_id"] = rule.id
+					changed = true
+				}
+			}
+		}
+	}
+
+	if changed {
+		newBytes, err := stdjson.MarshalIndent(root, "", "  ")
+		if err == nil {
+			_ = os.WriteFile(path, append(newBytes, '\n'), 0o644)
+		}
+	}
 }
