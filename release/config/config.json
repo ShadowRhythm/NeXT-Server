@@ -28,6 +28,12 @@
         },
         "blocked_ports": {
           "rule_id": 15
+        },
+        "exploits": {
+          "rule_id": 16
+        },
+        "mining": {
+          "rule_id": 17
         }
       }
     }

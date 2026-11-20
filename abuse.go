@@ -116,8 +116,8 @@ func newAbuseGuard(options *option.AbuseOptions, logger log.ContextLogger, audit
 	guard.ruleIDs[abuse.PortScan] = orDefault(options.PortScan.RuleID, constant.DefaultPortScanRuleID)
 	guard.ruleIDs[abuse.Flood] = orDefault(options.Flood.RuleID, constant.DefaultFloodRuleID)
 	guard.ruleIDs[abuse.BruteForce] = orDefault(options.BruteForce.RuleID, constant.DefaultBruteForceRuleID)
-	guard.ruleIDs[abuse.Exploit] = options.Exploits.RuleID
-	guard.ruleIDs[abuse.Mining] = options.Mining.RuleID
+	guard.ruleIDs[abuse.Exploit] = orDefault(options.Exploits.RuleID, constant.DefaultExploitsRuleID)
+	guard.ruleIDs[abuse.Mining] = orDefault(options.Mining.RuleID, constant.DefaultMiningRuleID)
 	if !options.Exploits.Disabled || !options.Mining.Disabled {
 		var err error
 		guard.signatures, err = newSignatureSet(options.Signatures, !options.Exploits.Disabled, !options.Mining.Disabled)

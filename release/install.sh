@@ -219,6 +219,12 @@ EOF
         },
         "blocked_ports": {
           "rule_id": 15
+        },
+        "exploits": {
+          "rule_id": 16
+        },
+        "mining": {
+          "rule_id": 17
         }
       }
     }
@@ -228,8 +234,7 @@ EOF
         echo -e "已在 \033[33m/etc/next-server/config.json\033[0m 生成默认配置文件模板，请修改后再启动服务！"
     else
         # 自动向现有配置中补全 abuse 规则（若缺失）
-        if ! grep -q '"abuse"' /etc/next-server/config.json 2>/dev/null; then
-            python3 -c '
+        python3 -c '
 import json
 p = "/etc/next-server/config.json"
 try:
@@ -238,14 +243,15 @@ try:
     changed = False
     for s in data.get("servers", []):
         if "abuse" not in s:
-            s["abuse"] = {
-                "p2p": {"rule_id": 11},
-                "port_scan": {"rule_id": 12},
-                "flood": {"rule_id": 13},
-                "brute_force": {"rule_id": 14},
-                "blocked_ports": {"rule_id": 15}
-            }
-            changed = True
+            s["abuse"] = {}
+        for k, v in [
+            ("p2p", 11), ("port_scan", 12), ("flood", 13),
+            ("brute_force", 14), ("blocked_ports", 15),
+            ("exploits", 16), ("mining", 17)
+        ]:
+            if k not in s["abuse"]:
+                s["abuse"][k] = {"rule_id": v}
+                changed = True
     if changed:
         with open(p, "w") as f:
             json.dump(data, f, indent=2)
@@ -253,7 +259,6 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true
-        fi
         systemctl restart next-server
         sleep 2
         check_status

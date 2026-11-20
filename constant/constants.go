@@ -43,6 +43,8 @@ const (
 	DefaultFloodRuleID        = 13
 	DefaultBruteForceRuleID   = 14
 	DefaultBlockedPortsRuleID = 15
+	DefaultExploitsRuleID     = 16
+	DefaultMiningRuleID       = 17
 )
 
 var (
