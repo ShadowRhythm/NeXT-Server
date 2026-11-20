@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.0
+
+### Added
+
+- **Exploit and mining checks.** Built-in signatures refuse exploit attempts in plain HTTP (Log4Shell, SQL injection, path traversal to system files, malware droppers, PHP-CGI argument injection, Spring4Shell, Apache's cgi-bin traversal) and logins to mining pools over plain Stratum (Stratum v1, XMRig-style logins, EthProxy). Both are on by default; `abuse.exploits` and `abuse.mining` turn them off or report hits to the panel under a detect rule.
+- **Live signature updates.** `abuse.signatures.path` (a file on the node) and `abuse.signatures.url` (HTTPS) add, replace or turn off signatures by name. They are read again on every pull, without a restart; a broken update is reported once and the last good signatures stay in force.
+
+## v1.2.1
+
+### Changed
+
+- The connection flood check bans a user for more than 500 connections to one destination within 10 seconds, up from 200. On v1.2.0's first day in production the only flood ban was an app retrying an API (201 connections to `open.feishu.cn:443`), not a flood; real HTTP floods run far above 500. Nodes that set `abuse.flood.connections_per_destination` keep their value.
+
 ## v1.2.0
 
 ### Security
@@ -13,6 +26,32 @@
 ### Added
 
 - **Abuse checks** that run on every node without detect rules: P2P file sharing (BitTorrent peer handshake, HTTP and UDP trackers, uTP and DHT; eDonkey and Kad) is refused, SMTP (25) and MS-RPC/NetBIOS/SMB (135, 137-139, 445) are blocked, and a user who port-scans, floods connections or brute-forces login ports (SSH, RDP, databases and the like) is banned on that node for 10 minutes, with their open connections closed. All on by default; the new `abuse` section changes thresholds and ports, turns checks off, or reports hits to the panel under a detect rule so they count toward its automatic ban. See "Abuse checks" in the README.
+
+## v1.1.0
+
+### Fixed
+
+- **Traffic and detect logs are no longer counted twice when the panel's answer is lost.** A report that failed for any reason used to be merged back into the counters and sent again inside the next batch. When the panel had recorded the first attempt and only its answer was lost (a request timeout, a gateway 504 while the panel kept working, a connection reset after it committed), the same traffic was billed twice, and detect rule hits counted twice toward the automatic ban.
+
+  Each traffic and detect log batch now carries a random `report_id`, and the panel records a batch once per ID. A batch that got no answer or a 5xx is sent again unchanged on the next push, before anything new is collected; new traffic keeps counting meanwhile and goes in the next batch. A batch the panel refuses (4xx) was not recorded, so its counts go back into the next batch, as before. Shutting down sends any batch still waiting, then the final traffic and, new, the final detect logs.
+
+  A panel without `report_id` support ignores the field and behaves as before, where a resend after a lost answer can still be counted twice.
+
+### Dependencies
+
+- Go 1.27.4, and the indirect dependencies that follow sing-box 1.14.4.
+
+## v1.0.4
+
+### Dependencies
+
+- sing-box 1.14.4 and golang.org/x/net 0.62.0. No functional changes.
+
+## v1.0.3
+
+### Dependencies
+
+- sing-box 1.14.3 and Go 1.27.3. No functional changes.
 
 ## v1.0.2
 

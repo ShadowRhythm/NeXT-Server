@@ -19,7 +19,7 @@ const (
 
 	DefaultFloodWindow                    = 10 * time.Second
 	DefaultFloodConnections               = 1000
-	DefaultFloodConnectionsPerDestination = 200
+	DefaultFloodConnectionsPerDestination = 500
 
 	DefaultBruteForceWindow                    = time.Minute
 	DefaultBruteForceHosts                     = 30
@@ -28,6 +28,10 @@ const (
 	// AbuseOutageGrace: a failed dial counts toward a port scan only if a
 	// dial on the node got through since this long before it started.
 	AbuseOutageGrace = 5 * time.Second
+
+	// SignatureFetchTimeout bounds fetching abuse.signatures.url, which
+	// happens in the pull loop.
+	SignatureFetchTimeout = 15 * time.Second
 
 	// AbuseNoticeInterval is how often one user's repeated hits of one kind
 	// are logged and reported to the panel.

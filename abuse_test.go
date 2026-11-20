@@ -54,7 +54,7 @@ func TestAbuseGuardOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if guard.p2p || len(guard.blockedPorts) > 0 || len(guard.loginPorts) > 0 || guard.watchesDials() || guard.limits.Connections > 0 {
+	if guard.p2p || len(guard.blockedPorts) > 0 || len(guard.loginPorts) > 0 || guard.watchesDials() || guard.limits.Connections > 0 || guard.signatures != nil {
 		t.Fatalf("disabled guard still checks: %+v", guard)
 	}
 
@@ -78,7 +78,7 @@ func TestAbuseGuardOptions(t *testing.T) {
 		t.Fatalf("flood options: %+v", guard.limits)
 	}
 
-	for _, invalid := range []string{`{"ban_duration": "-1s"}`, `{"p2p": {"rule_id": -1}}`, `{"brute_force": {"hosts": -1}}`, `{"flood": {"connections": -5}}`} {
+	for _, invalid := range []string{`{"ban_duration": "-1s"}`, `{"p2p": {"rule_id": -1}}`, `{"mining": {"rule_id": -2}}`, `{"signatures": {"url": "http://example.com/s.json"}}`, `{"brute_force": {"hosts": -1}}`, `{"flood": {"connections": -5}}`} {
 		if _, err = newAbuseGuard(decodeAbuse(t, invalid), logger, newAuditor()); err == nil {
 			t.Error(invalid, " accepted")
 		}
@@ -179,5 +179,21 @@ func TestDialFailuresDuringOutage(t *testing.T) {
 	}
 	if !user.abuse.Banned(time.Now()) {
 		t.Fatal("not banned after three refused destinations")
+	}
+}
+
+// v1.2.0's only production flood ban was an app retrying an API, 201
+// connections in 10 s; the default lets that through.
+func TestFloodDefaultAllowsRetryingApps(t *testing.T) {
+	guard, err := newAbuseGuard(nil, log.NewNOPFactory().Logger(), newAuditor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := newUserState(context.Background(), 1)
+	api := M.ParseSocksaddrHostPort("open.feishu.cn", 443)
+	for i := 0; i < 250; i++ {
+		if err = guard.admit(context.Background(), user, N.NetworkTCP, api); err != nil {
+			t.Fatal("connection ", i+1, ": ", err)
+		}
 	}
 }

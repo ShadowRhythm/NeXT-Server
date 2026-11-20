@@ -152,6 +152,7 @@ func (s *Server) Start() error {
 	s.applyUsers(users)
 	s.pullDetectRules()
 	s.refreshLocalAddresses()
+	s.abuse.refreshSignatures(s.ctx)
 	err = s.syncNodeServer()
 	if err != nil {
 		return err
@@ -239,6 +240,7 @@ func (s *Server) pullOnce() {
 	}
 	s.pullDetectRules()
 	s.refreshLocalAddresses()
+	s.abuse.refreshSignatures(s.ctx)
 }
 
 // refreshLocalAddresses keeps the last addresses when reading them fails,
