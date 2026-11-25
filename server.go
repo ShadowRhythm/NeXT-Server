@@ -25,7 +25,6 @@ import (
 	"github.com/sagernet/sing-box/route"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
@@ -52,6 +51,7 @@ type Server struct {
 	pullInterval time.Duration
 	pushInterval time.Duration
 	loops        sync.WaitGroup
+	onRestart    func()
 
 	// Owned by the pull loop once started.
 	nodeConfig    *adapter.NodeConfig
@@ -188,13 +188,26 @@ func (s *Server) Close() error {
 	s.connections.CloseAll()
 	ctx, cancel := context.WithTimeout(context.Background(), constant.FinalPushTimeout)
 	defer cancel()
-	if reportErr := s.traffic.flush(ctx); reportErr != nil {
-		err = E.Errors(err, E.Cause(reportErr, "report final traffic"))
-	}
-	if reportErr := s.detectLogs.flush(ctx); reportErr != nil {
-		err = E.Errors(err, E.Cause(reportErr, "report final detect logs"))
-	}
-	return err
+	var (
+		trafficErr   error
+		detectLogErr error
+		flushGroup   sync.WaitGroup
+	)
+	flushGroup.Add(2)
+	go func() {
+		defer flushGroup.Done()
+		if reportErr := s.traffic.flush(ctx); reportErr != nil {
+			trafficErr = E.Cause(reportErr, "report final traffic")
+		}
+	}()
+	go func() {
+		defer flushGroup.Done()
+		if reportErr := s.detectLogs.flush(ctx); reportErr != nil {
+			detectLogErr = E.Cause(reportErr, "report final detect logs")
+		}
+	}()
+	flushGroup.Wait()
+	return E.Errors(err, trafficErr, detectLogErr)
 }
 
 func (s *Server) loop(interval time.Duration, run func()) {
@@ -348,38 +361,65 @@ func (s *Server) pushOnce() {
 		}
 		onlineUsers++
 		for _, address := range addresses {
-			online = append(online, adapter.UserOnline{UserID: id, IP: M.SocksaddrFrom(address, 0).AddrString()})
+			online = append(online, adapter.UserOnline{UserID: id, IP: address.String()})
 		}
 	}
 	hb, heartbeatErr := s.api.Heartbeat(s.ctx, onlineUsers)
 	s.logError("heartbeat", heartbeatErr)
 	if hb.Upgrade {
-		s.triggerUpgrade()
+		if s.triggerUpgrade() {
+			return
+		}
 	} else if hb.Restart {
 		s.triggerRestart()
+		return
 	}
 
-	s.logError("report traffic", s.traffic.flush(s.ctx))
+	var reportGroup sync.WaitGroup
+	reportGroup.Add(2)
+	go func() {
+		defer reportGroup.Done()
+		s.logError("report traffic", s.traffic.flush(s.ctx))
+	}()
+	go func() {
+		defer reportGroup.Done()
+		s.logError("report detect logs", s.detectLogs.flush(s.ctx))
+	}()
 	if len(online) > 0 {
-		s.logError("report online users", s.api.ReportOnline(s.ctx, online))
+		reportGroup.Add(1)
+		go func() {
+			defer reportGroup.Done()
+			s.logError("report online users", s.api.ReportOnline(s.ctx, online))
+		}()
 	}
-	s.logError("report detect logs", s.detectLogs.flush(s.ctx))
+	reportGroup.Wait()
 }
 
 // triggerUpgrade downloads the latest release and replaces the running binary,
-// then exits so the process manager (systemd) restarts it.
-func (s *Server) triggerUpgrade() {
+// then requests a graceful shutdown so the process manager (systemd) restarts
+// it with the new binary after flushing final reports.
+func (s *Server) triggerUpgrade() bool {
 	s.logger.Info("upgrade requested by panel, downloading latest release...")
 	if err := update.Do(s.ctx, "ShadowRhythm/NeXT-Server"); err != nil {
 		s.logger.Error("upgrade failed: ", err)
-		return
+		return false
 	}
-	s.logger.Info("upgrade complete, exiting for restart...")
-	os.Exit(1)
+	s.logger.Info("upgrade complete, restarting gracefully...")
+	s.requestRestart()
+	return true
 }
 
-// triggerRestart exits the process so systemd will restart it.
+// triggerRestart requests a graceful shutdown so systemd restarts the process
+// after flushing final reports.
 func (s *Server) triggerRestart() {
-	s.logger.Info("restart requested by panel, exiting for restart...")
+	s.logger.Info("restart requested by panel, restarting gracefully...")
+	s.requestRestart()
+}
+
+func (s *Server) requestRestart() {
+	if s.onRestart != nil {
+		s.onRestart()
+		return
+	}
 	os.Exit(1)
 }

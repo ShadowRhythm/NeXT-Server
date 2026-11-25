@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/The-NeXT-Project/NeXT-Server/common/profiler"
@@ -19,12 +20,14 @@ import (
 )
 
 type Instance struct {
-	options    option.Options
-	logFactory log.Factory
-	logger     log.ContextLogger
-	reporter   reporter.Reporter
-	profiler   io.Closer
-	servers    []*Server
+	options     option.Options
+	logFactory  log.Factory
+	logger      log.ContextLogger
+	reporter    reporter.Reporter
+	profiler    io.Closer
+	servers     []*Server
+	restartCh   chan struct{}
+	restartOnce sync.Once
 }
 
 func New(ctx context.Context, options option.Options) (*Instance, error) {
@@ -60,6 +63,7 @@ func newInstance(ctx context.Context, options option.Options, errorReporter repo
 		logFactory: logFactory,
 		logger:     reporter.WrapLogger(logFactory.Logger(), errorReporter),
 		reporter:   errorReporter,
+		restartCh:  make(chan struct{}, 1),
 	}
 	for index, serverOptions := range options.Servers {
 		logger := instance.logger
@@ -70,9 +74,25 @@ func newInstance(ctx context.Context, options option.Options, errorReporter repo
 		if err != nil {
 			return nil, E.Cause(err, "server[", index, "]")
 		}
+		server.onRestart = instance.requestRestart
 		instance.servers = append(instance.servers, server)
 	}
 	return instance, nil
+}
+
+// RestartRequested returns a channel that closes/receives once when a node server
+// requests a graceful restart (e.g. after a panel-triggered upgrade or restart).
+func (i *Instance) RestartRequested() <-chan struct{} {
+	return i.restartCh
+}
+
+func (i *Instance) requestRestart() {
+	i.restartOnce.Do(func() {
+		select {
+		case i.restartCh <- struct{}{}:
+		default:
+		}
+	})
 }
 
 func (i *Instance) Start() error {

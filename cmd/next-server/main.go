@@ -93,7 +93,12 @@ func run() error {
 	}
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
-	<-osSignals
+	restartRequested := false
+	select {
+	case <-osSignals:
+	case <-server.RestartRequested():
+		restartRequested = true
+	}
 	cancel()
 	closeCtx, closed := context.WithCancel(context.Background())
 	go closeMonitor(closeCtx)
@@ -102,6 +107,9 @@ func run() error {
 		log.Error("close service: ", err)
 	}
 	closed()
+	if restartRequested {
+		os.Exit(1)
+	}
 	return nil
 }
 

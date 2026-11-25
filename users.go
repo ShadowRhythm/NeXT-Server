@@ -27,6 +27,9 @@ type userState struct {
 
 	upload   atomic.Int64
 	download atomic.Int64
+	// Pre-built single-element counter slices reused on every connection.
+	uploadCounters   []*atomic.Int64
+	downloadCounters []*atomic.Int64
 	// limiter is nil when neither the user nor the node has a speed limit.
 	limiter atomic.Pointer[limit.Limiter]
 
@@ -46,7 +49,9 @@ type ipActivity struct {
 }
 
 func newUserState(ctx context.Context, id int) *userState {
-	state := &userState{id: id, ips: make(map[netip.Addr]*ipActivity)}
+	state := &userState{id: id}
+	state.uploadCounters = []*atomic.Int64{&state.upload}
+	state.downloadCounters = []*atomic.Int64{&state.download}
 	state.ctx, state.cancel = context.WithCancel(ctx)
 	state.closeConnections()
 	return state
@@ -82,6 +87,9 @@ func (u *userState) setSpeedLimit(bytesPerSecond uint64) {
 func (u *userState) open(address netip.Addr) func() {
 	address = address.Unmap()
 	u.access.Lock()
+	if u.ips == nil {
+		u.ips = make(map[netip.Addr]*ipActivity, 1)
+	}
 	activity := u.ips[address]
 	if activity == nil {
 		activity = &ipActivity{}
@@ -91,15 +99,16 @@ func (u *userState) open(address netip.Addr) func() {
 	activity.lastSeen = time.Now()
 	u.active++
 	u.access.Unlock()
-	var once sync.Once
+	var closed atomic.Bool
 	return func() {
-		once.Do(func() {
-			u.access.Lock()
-			activity.active--
-			activity.lastSeen = time.Now()
-			u.active--
-			u.access.Unlock()
-		})
+		if closed.Swap(true) {
+			return
+		}
+		u.access.Lock()
+		activity.active--
+		activity.lastSeen = time.Now()
+		u.active--
+		u.access.Unlock()
 	}
 }
 
@@ -108,6 +117,9 @@ func (u *userState) open(address netip.Addr) func() {
 func (u *userState) onlineIPs(since time.Time) []netip.Addr {
 	u.access.Lock()
 	defer u.access.Unlock()
+	if len(u.ips) == 0 {
+		return nil
+	}
 	var addresses []netip.Addr
 	for address, activity := range u.ips {
 		if activity.active > 0 || !activity.lastSeen.Before(since) {

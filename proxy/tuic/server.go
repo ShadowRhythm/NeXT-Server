@@ -90,11 +90,9 @@ func (s *Server) Close() error {
 
 // UpdateUsers authenticates users by UUID and password.
 func (s *Server) UpdateUsers(users []adapter.User) error {
-	var (
-		ids       []int
-		uuids     [][16]byte
-		passwords []string
-	)
+	ids := make([]int, 0, len(users))
+	uuids := make([][16]byte, 0, len(users))
+	passwords := make([]string, 0, len(users))
 	for _, user := range users {
 		userUUID, err := uuid.FromString(user.UUID)
 		if err != nil {

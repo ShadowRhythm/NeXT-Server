@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"sync/atomic"
 
 	"github.com/The-NeXT-Project/NeXT-Server/adapter"
 
@@ -62,7 +61,7 @@ func (s *Server) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata 
 	if limiter := user.limiter.Load(); limiter != nil {
 		conn = limiter.Conn(user.ctx, conn)
 	}
-	conn = bufio.NewInt64CounterConn(conn, []*atomic.Int64{&user.upload}, []*atomic.Int64{&user.download})
+	conn = bufio.NewInt64CounterConn(conn, user.uploadCounters, user.downloadCounters)
 	stop := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
 	dialer := s.dialer
 	var watch *dialWatch
@@ -123,7 +122,7 @@ func (s *Server) RoutePacketConnectionEx(ctx context.Context, conn N.PacketConn,
 	if limiter := user.limiter.Load(); limiter != nil {
 		conn = limiter.PacketConn(user.ctx, conn)
 	}
-	conn = bufio.NewInt64CounterPacketConn(conn, []*atomic.Int64{&user.upload}, nil, []*atomic.Int64{&user.download}, nil)
+	conn = bufio.NewInt64CounterPacketConn(conn, user.uploadCounters, nil, user.downloadCounters, nil)
 	stop := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
 	s.connections.NewPacketConnection(ctx, s.dialer, conn, metadata, func(err error) {
 		stop()

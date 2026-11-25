@@ -75,10 +75,8 @@ func (s *Server) Close() error {
 // UpdateUsers authenticates users by UUID, which the panel hands to Trojan
 // clients as their password.
 func (s *Server) UpdateUsers(users []adapter.User) error {
-	var (
-		ids       []int
-		passwords []string
-	)
+	ids := make([]int, 0, len(users))
+	passwords := make([]string, 0, len(users))
 	seen := make(map[string]bool, len(users))
 	for _, user := range users {
 		if user.UUID == "" {

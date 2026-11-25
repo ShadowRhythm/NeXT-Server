@@ -176,7 +176,7 @@ LimitNOFILE=65535
 WorkingDirectory=/usr/local/next-server/
 ExecStart=/usr/local/next-server/next-server -c /etc/next-server/config.json
 Restart=on-failure
-RestartSec=10s
+RestartSec=3s
 
 [Install]
 WantedBy=multi-user.target
@@ -186,15 +186,27 @@ EOF
     systemctl daemon-reload
     systemctl enable next-server >/dev/null 2>&1
 
-    # 开启内核级 TCP Fast Open (client + server = 3)
-    if [[ -w /proc/sys/net/ipv4/tcp_fastopen ]]; then
-        sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+    # 优化网络内核参数（UDP 缓冲区、BBR、TFO、连接队列）
+    tune_sysctl() {
+        local sysctl_file="/etc/sysctl.d/99-next-server.conf"
+        local params=(
+            "net.core.default_qdisc = fq"
+            "net.ipv4.tcp_congestion_control = bbr"
+            "net.core.rmem_max = 16777216"
+            "net.core.wmem_max = 16777216"
+            "net.core.somaxconn = 32768"
+            "net.ipv4.tcp_max_syn_backlog = 16384"
+            "net.ipv4.tcp_fastopen = 3"
+            "fs.file-max = 1000000"
+        )
         if [[ -d /etc/sysctl.d ]]; then
-            if ! grep -qs "^net\.ipv4\.tcp_fastopen" /etc/sysctl.d/99-next-server.conf 2>/dev/null; then
-                echo "net.ipv4.tcp_fastopen = 3" >> /etc/sysctl.d/99-next-server.conf
-            fi
+            printf '%s\n' "${params[@]}" > "$sysctl_file"
         fi
-    fi
+        for p in "${params[@]}"; do
+            sysctl -w "${p// = /=}" >/dev/null 2>&1 || true
+        done
+    }
+    tune_sysctl
 
     # 初始化默认配置文件（若不存在）
     if [[ ! -f /etc/next-server/config.json ]]; then

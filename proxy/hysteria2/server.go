@@ -105,10 +105,8 @@ func (s *Server) Close() error {
 
 // UpdateUsers authenticates users by password.
 func (s *Server) UpdateUsers(users []adapter.User) error {
-	var (
-		ids       []int
-		passwords []string
-	)
+	ids := make([]int, 0, len(users))
+	passwords := make([]string, 0, len(users))
 	for _, user := range users {
 		if user.Password == "" {
 			continue

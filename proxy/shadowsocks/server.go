@@ -91,10 +91,8 @@ func (s *Server) Close() error {
 // UpdateUsers authenticates users by password, which the panel has already
 // turned into a base64 user key for the node's method.
 func (s *Server) UpdateUsers(users []adapter.User) error {
-	var (
-		ids  []int
-		keys []string
-	)
+	ids := make([]int, 0, len(users))
+	keys := make([]string, 0, len(users))
 	for _, user := range users {
 		key, err := base64.StdEncoding.DecodeString(user.Password)
 		if err != nil || len(key) != s.keyLen {

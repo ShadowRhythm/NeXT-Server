@@ -86,10 +86,8 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) UpdateUsers(users []adapter.User) error {
-	var (
-		ids   []int
-		uuids []string
-	)
+	ids := make([]int, 0, len(users))
+	uuids := make([]string, 0, len(users))
 	for _, user := range users {
 		// One malformed UUID would make the service reject the whole list.
 		if _, err := uuid.FromString(user.UUID); err != nil {
