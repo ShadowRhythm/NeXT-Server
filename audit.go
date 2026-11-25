@@ -8,6 +8,15 @@ import (
 	"github.com/The-NeXT-Project/NeXT-Server/adapter"
 )
 
+const hexStackPayloadLimit = 512
+
+var hexBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 4096)
+		return &b
+	},
+}
+
 // auditor matches connections against the panel's detect rules and keeps
 // the hits until they are reported.
 type auditor struct {
@@ -38,17 +47,39 @@ func (a *auditor) match(host string, domain string, payload []byte) (adapter.Det
 	if rules == nil {
 		return adapter.DetectRule{}, false
 	}
-	var hexPayload string
+	var (
+		stackHex [hexStackPayloadLimit * 2]byte
+		hexBytes []byte
+		poolPtr  *[]byte
+	)
+	defer func() {
+		if poolPtr != nil {
+			hexBufPool.Put(poolPtr)
+		}
+	}()
 	for _, rule := range *rules {
 		switch rule.Type {
 		case adapter.DetectRuleTypeHex:
 			if len(payload) == 0 {
 				continue
 			}
-			if hexPayload == "" {
-				hexPayload = hex.EncodeToString(payload)
+			if hexBytes == nil {
+				need := hex.EncodedLen(len(payload))
+				if len(payload) <= hexStackPayloadLimit {
+					hex.Encode(stackHex[:need], payload)
+					hexBytes = stackHex[:need]
+				} else {
+					poolPtr = hexBufPool.Get().(*[]byte)
+					if cap(*poolPtr) < need {
+						*poolPtr = make([]byte, need)
+					} else {
+						*poolPtr = (*poolPtr)[:need]
+					}
+					hex.Encode(*poolPtr, payload)
+					hexBytes = *poolPtr
+				}
 			}
-			if rule.Regexp.MatchString(hexPayload) {
+			if rule.Regexp.Match(hexBytes) {
 				return rule, true
 			}
 		case adapter.DetectRuleTypePlain:

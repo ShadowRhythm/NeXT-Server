@@ -186,6 +186,16 @@ EOF
     systemctl daemon-reload
     systemctl enable next-server >/dev/null 2>&1
 
+    # 开启内核级 TCP Fast Open (client + server = 3)
+    if [[ -w /proc/sys/net/ipv4/tcp_fastopen ]]; then
+        sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+        if [[ -d /etc/sysctl.d ]]; then
+            if ! grep -qs "^net\.ipv4\.tcp_fastopen" /etc/sysctl.d/99-next-server.conf 2>/dev/null; then
+                echo "net.ipv4.tcp_fastopen = 3" >> /etc/sysctl.d/99-next-server.conf
+            fi
+        fi
+    fi
+
     # 初始化默认配置文件（若不存在）
     if [[ ! -f /etc/next-server/config.json ]]; then
         cat << 'EOF' > /etc/next-server/config.json
@@ -198,6 +208,7 @@ EOF
       "url": "https://panel.example.com",
       "key": "<node communication key>",
       "listen": "::",
+      "tcp_fast_open": true,
       "tls": {
         "acme": {
           "email": "admin@example.com",

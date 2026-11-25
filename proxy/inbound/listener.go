@@ -3,7 +3,9 @@ package inbound
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -40,6 +42,7 @@ type ConnectionHandler func(ctx context.Context, conn net.Conn, metadata boxAdap
 type Listener struct {
 	ctx           context.Context
 	logger        logger.ContextLogger
+	options       Options
 	listener      *listener.Listener
 	proxyProtocol bool
 	connPolicy    proxyproto.ConnPolicyFunc
@@ -50,15 +53,9 @@ func New(options Options) (*Listener, error) {
 	l := &Listener{
 		ctx:           options.Context,
 		logger:        options.Logger,
+		options:       options,
 		proxyProtocol: options.ProxyProtocol,
-		listener: listener.New(listener.Options{
-			Context:                  options.Context,
-			Logger:                   options.Logger,
-			Network:                  options.Network,
-			Listen:                   options.Listen,
-			PacketHandler:            options.PacketHandler,
-			ThreadUnsafePacketWriter: true,
-		}),
+		listener:      newSingListener(options, options.Listen),
 	}
 	if len(options.ProxyProtocolTrusted) > 0 {
 		policy, err := proxyproto.ConnLaxWhiteListPolicy(options.ProxyProtocolTrusted)
@@ -68,6 +65,17 @@ func New(options Options) (*Listener, error) {
 		l.connPolicy = policy
 	}
 	return l, nil
+}
+
+func newSingListener(options Options, listen boxOption.ListenOptions) *listener.Listener {
+	return listener.New(listener.Options{
+		Context:                  options.Context,
+		Logger:                   options.Logger,
+		Network:                  options.Network,
+		Listen:                   listen,
+		PacketHandler:            options.PacketHandler,
+		ThreadUnsafePacketWriter: true,
+	})
 }
 
 // Start starts the sing-box listener's own networks (the UDP packet loop).
@@ -92,6 +100,17 @@ func (l *Listener) UDPAddr() M.Socksaddr {
 // that never sends one cannot stall the accept loop.
 func (l *Listener) ListenTCP() (net.Listener, error) {
 	tcpListener, err := l.listener.ListenTCP()
+	if err != nil && l.options.Listen.TCPFastOpen && isTFOUnsupported(err) {
+		l.logger.Warn("TCP Fast Open unsupported on this system, falling back to standard TCP: ", err)
+		fallbackListen := l.options.Listen
+		fallbackListen.TCPFastOpen = false
+		fallbackListener := newSingListener(l.options, fallbackListen)
+		if fallbackTCP, err2 := fallbackListener.ListenTCP(); err2 == nil {
+			l.listener = fallbackListener
+			tcpListener = fallbackTCP
+			err = nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +122,11 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 		ConnPolicy:        l.connPolicy,
 		ReadHeaderTimeout: proxyProtocolHeaderTimeout,
 	}, nil
+}
+
+func isTFOUnsupported(err error) bool {
+	var sysErr *os.SyscallError
+	return errors.As(err, &sysErr) && sysErr.Syscall == "setsockopt(TCP_FASTOPEN)"
 }
 
 // ServeTCP accepts on tcpListener until it is closed.

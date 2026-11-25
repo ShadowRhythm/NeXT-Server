@@ -31,6 +31,11 @@ type NodeOptions struct {
 func (o NodeOptions) NewListener(network []string, packetHandler boxAdapter.PacketHandler, udpFragment bool) (*Listener, error) {
 	listenOptions := o.Server.ListenOptions
 	listenOptions.ListenPort = o.Config.ListenPort
+	if o.Server.TCPFastOpen != nil {
+		listenOptions.TCPFastOpen = *o.Server.TCPFastOpen
+	} else if !listenOptions.TCPFastOpen {
+		listenOptions.TCPFastOpen = true
+	}
 	if listenOptions.Listen == nil {
 		// sing-box would bind to loopback.
 		listenOptions.Listen = common.Ptr(badoption.Addr(netip.IPv6Unspecified()))

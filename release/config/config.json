@@ -7,6 +7,7 @@
       "url": "https://panel.example.com",
       "key": "<node communication key>",
       "listen": "::",
+      "tcp_fast_open": true,
       "tls": {
         "acme": {
           "email": "admin@example.com",

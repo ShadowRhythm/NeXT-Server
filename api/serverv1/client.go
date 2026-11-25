@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -77,11 +78,27 @@ func NewClient(options option.ServerOptions) (*Client, error) {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 	return &Client{
-		httpClient: &http.Client{Timeout: timeout},
-		baseURL:    strings.TrimSuffix(baseURL.String(), "/") + "/api/server/v1",
-		key:        options.Key,
-		localTLS:   options.TLS,
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+		},
+		baseURL:  strings.TrimSuffix(baseURL.String(), "/") + "/api/server/v1",
+		key:      options.Key,
+		localTLS: options.TLS,
 	}, nil
 }
 
@@ -132,13 +149,15 @@ func (c *Client) do(request *http.Request, data any) (*http.Response, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
 		return response, nil
 	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
-	if err != nil {
-		return nil, err
-	}
 	if response.StatusCode != http.StatusOK {
+		content, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if readErr != nil {
+			return nil, readErr
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
 		apiErr := &Error{Status: response.StatusCode}
 		var errorResponse struct {
 			Error struct {
@@ -156,18 +175,23 @@ func (c *Client) do(request *http.Request, data any) (*http.Response, error) {
 		envelope := struct {
 			Data any `json:"data"`
 		}{data}
-		err = json.Unmarshal(content, &envelope)
-		if err != nil {
+		if err = json.NewDecoder(io.LimitReader(response.Body, 64<<20)).Decode(&envelope); err != nil {
 			return nil, E.Cause(err, "decode response")
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+	} else {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 	}
 	return response, nil
 }
 
 func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (adapter.HeartbeatResponse, error) {
-	content, err := json.Marshal(map[string]any{
-		"online_user": onlineUsers,
-		"version":     constant.Version,
+	content, err := json.Marshal(struct {
+		OnlineUser int    `json:"online_user"`
+		Version    string `json:"version"`
+	}{
+		OnlineUser: onlineUsers,
+		Version:    constant.Version,
 	})
 	if err != nil {
 		return adapter.HeartbeatResponse{}, err
@@ -185,28 +209,19 @@ func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (adapter.Heartb
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 		return adapter.HeartbeatResponse{}, E.New("PUT /heartbeat: HTTP ", http.StatusText(resp.StatusCode))
 	}
 	var result struct {
 		Upgrade bool `json:"upgrade"`
 		Restart bool `json:"restart"`
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	_ = json.Unmarshal(body, &result)
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	return adapter.HeartbeatResponse{
 		Upgrade: result.Upgrade,
 		Restart: result.Restart,
 	}, nil
-}
-
-// withReportID adds report_id to a batch report. The panel records a batch
-// once per ID, so a batch resent after a timeout is not counted again. An
-// empty ID is left out: the panel refuses an empty one.
-func withReportID(body map[string]any, reportID string) map[string]any {
-	if reportID != "" {
-		body["report_id"] = reportID
-	}
-	return body
 }
 
 func (c *Client) ReportTraffic(ctx context.Context, reportID string, items []adapter.UserTraffic) error {
@@ -219,7 +234,13 @@ func (c *Client) ReportTraffic(ctx context.Context, reportID string, items []ada
 	for _, item := range items {
 		entries = append(entries, entry{item.UserID, item.Upload, item.Download})
 	}
-	return c.send(ctx, http.MethodPost, "/users/traffic", withReportID(map[string]any{"traffic": entries}, reportID))
+	return c.send(ctx, http.MethodPost, "/users/traffic", struct {
+		Traffic  []entry `json:"traffic"`
+		ReportID string  `json:"report_id,omitempty"`
+	}{
+		Traffic:  entries,
+		ReportID: reportID,
+	})
 }
 
 func (c *Client) ReportOnline(ctx context.Context, items []adapter.UserOnline) error {
@@ -231,7 +252,11 @@ func (c *Client) ReportOnline(ctx context.Context, items []adapter.UserOnline) e
 	for _, item := range items {
 		entries = append(entries, entry{item.UserID, item.IP})
 	}
-	return c.send(ctx, http.MethodPost, "/users/online", map[string]any{"online": entries})
+	return c.send(ctx, http.MethodPost, "/users/online", struct {
+		Online []entry `json:"online"`
+	}{
+		Online: entries,
+	})
 }
 
 func (c *Client) ReportDetectLogs(ctx context.Context, reportID string, items []adapter.DetectLog) error {
@@ -243,5 +268,11 @@ func (c *Client) ReportDetectLogs(ctx context.Context, reportID string, items []
 	for _, item := range items {
 		entries = append(entries, entry{item.UserID, item.RuleID})
 	}
-	return c.send(ctx, http.MethodPost, "/users/detect_logs", withReportID(map[string]any{"logs": entries}, reportID))
+	return c.send(ctx, http.MethodPost, "/users/detect_logs", struct {
+		Logs     []entry `json:"logs"`
+		ReportID string  `json:"report_id,omitempty"`
+	}{
+		Logs:     entries,
+		ReportID: reportID,
+	})
 }

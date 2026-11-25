@@ -37,12 +37,14 @@ The node listens on `offset_port_node`, falling back to `offset_port_user`, then
       "pull_interval": "60s",        // node settings, users and detect rules
       "push_interval": "60s",        // heartbeat, traffic, online IPs, detect logs
 
-      "listen": "::",                // plus any sing-box listen field, e.g. tcp_fast_open
+      "listen": "::",                // plus any sing-box listen field
+      "tcp_fast_open": true,         // enabled by default; set false to disable
       "proxy_protocol": false,       // accept PROXY protocol v1/v2 headers on TCP
       "proxy_protocol_trusted": [],  // CIDRs allowed to send them; empty trusts everyone
 
       "tls": {},                     // certificate source, see below
       "multiplex": { "enabled": true },  // sing-mux for VMess, Trojan and Shadowsocks
+      "masquerade": null,            // Hysteria2 HTTP/3 masquerade, e.g. "http://127.0.0.1:80" or {"type": "file", "directory": "/var/www/html"}
       "dialer": {},                  // sing-box dialer options for outbound traffic
       "front_proxy": null,           // { "type": "socks5"|"socks4"|"socks4a"|"http", "server": "host:port", ... }
       "allow_private_destinations": false, // let users reach the node itself and its private networks

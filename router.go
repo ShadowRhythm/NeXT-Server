@@ -94,7 +94,7 @@ func (s *Server) RoutePacketConnectionEx(ctx context.Context, conn N.PacketConn,
 		s.logRefusal(ctx, user, err)
 		return
 	}
-	if s.auditor.enabled() || s.abuse.inspectsPayload() {
+	if s.auditor.enabled() || s.abuse.inspectsPacketPayload() {
 		conn, err = s.inspectPacket(ctx, conn, &metadata, user)
 		if err != nil {
 			N.CloseOnHandshakeFailure(conn, onClose, err)
@@ -184,34 +184,58 @@ var streamSniffers = []sniff.StreamSniffer{
 	sniff.HTTPHost,
 	sniff.StreamDomainNameQuery,
 	sniff.BitTorrent,
-	sniff.SSH,
-	sniff.RDP,
+}
+
+var streamP2PSniffers = []sniff.StreamSniffer{
+	sniff.BitTorrent,
 }
 
 var packetSniffers = []sniff.PacketSniffer{
 	sniff.QUICClientHello,
 	sniff.DomainNameQuery,
-	sniff.STUNMessage,
 	sniff.UTP,
 	sniff.UDPTracker,
-	sniff.DTLSRecord,
+}
+
+var packetP2PSniffers = []sniff.PacketSniffer{
+	sniff.UTP,
+	sniff.UDPTracker,
 }
 
 // inspectStream peeks at the first payload and refuses the connection when a
 // detect rule matches or the abuse guard finds BitTorrent.
 func (s *Server) inspectStream(ctx context.Context, conn net.Conn, metadata *boxAdapter.InboundContext, user *userState) (net.Conn, error) {
+	auditEnabled := s.auditor.enabled()
+	if sniff.Skip(metadata) {
+		if auditEnabled {
+			if rule, hit := s.auditor.match(destinationHost(metadata.Destination), metadata.Domain, nil); hit {
+				s.auditor.record(user.id, rule.ID)
+				return conn, E.New("blocked by detect rule ", rule.ID, ": ", metadata.Destination)
+			}
+		}
+		return conn, nil
+	}
 	if deadline.NeedAdditionalReadDeadline(conn) {
 		conn = deadline.NewConn(conn)
 	}
+	var sniffers []sniff.StreamSniffer
+	switch {
+	case auditEnabled:
+		sniffers = streamSniffers
+	case s.abuse.p2p:
+		sniffers = streamP2PSniffers
+	}
 	buffer := buf.NewPacket()
 	// A server-first protocol sends nothing until the timeout; that is fine.
-	_ = sniff.PeekStream(ctx, metadata, conn, nil, buffer, 0, streamSniffers...)
-	rule, hit := s.auditor.match(destinationHost(metadata.Destination), metadata.Domain, buffer.Bytes())
+	_ = sniff.PeekStream(ctx, metadata, conn, nil, buffer, 0, sniffers...)
 	var err error
-	if hit {
-		s.auditor.record(user.id, rule.ID)
-		err = E.New("blocked by detect rule ", rule.ID, ": ", metadata.Destination)
-	} else {
+	if auditEnabled {
+		if rule, hit := s.auditor.match(destinationHost(metadata.Destination), metadata.Domain, buffer.Bytes()); hit {
+			s.auditor.record(user.id, rule.ID)
+			err = E.New("blocked by detect rule ", rule.ID, ": ", metadata.Destination)
+		}
+	}
+	if err == nil {
 		err = s.abuse.checkStream(ctx, user, metadata, buffer.Bytes())
 	}
 	if buffer.IsEmpty() {
@@ -232,12 +256,19 @@ func (s *Server) inspectPacket(ctx context.Context, conn N.PacketConn, metadata 
 	if !metadata.Destination.IsValid() || metadata.Destination.Addr.IsUnspecified() {
 		metadata.Destination = destination
 	}
-	_ = sniff.PeekPacket(ctx, metadata, buffer.Bytes(), packetSniffers...)
-	rule, hit := s.auditor.match(destinationHost(destination), metadata.Domain, buffer.Bytes())
-	if hit {
-		s.auditor.record(user.id, rule.ID)
-		err = E.New("blocked by detect rule ", rule.ID, ": ", destination)
-	} else {
+	auditEnabled := s.auditor.enabled()
+	sniffers := packetP2PSniffers
+	if auditEnabled {
+		sniffers = packetSniffers
+	}
+	_ = sniff.PeekPacket(ctx, metadata, buffer.Bytes(), sniffers...)
+	if auditEnabled {
+		if rule, hit := s.auditor.match(destinationHost(destination), metadata.Domain, buffer.Bytes()); hit {
+			s.auditor.record(user.id, rule.ID)
+			err = E.New("blocked by detect rule ", rule.ID, ": ", destination)
+		}
+	}
+	if err == nil {
 		err = s.abuse.checkPacket(ctx, user, metadata, buffer.Bytes())
 	}
 	conn = bufio.NewCachedPacketConn(conn, buffer, destination)

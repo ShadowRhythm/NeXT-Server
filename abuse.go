@@ -171,9 +171,14 @@ func (g *abuseGuard) admit(ctx context.Context, user *userState, network string,
 	return nil
 }
 
-// inspectsPayload reports whether the guard needs the first payload.
+// inspectsPayload reports whether the guard needs the first TCP payload.
 func (g *abuseGuard) inspectsPayload() bool {
 	return g.p2p || g.signatures != nil
+}
+
+// inspectsPacketPayload reports whether the guard needs the first UDP packet.
+func (g *abuseGuard) inspectsPacketPayload() bool {
+	return g.p2p
 }
 
 // checkStream refuses a TCP connection whose first payload is P2P, an

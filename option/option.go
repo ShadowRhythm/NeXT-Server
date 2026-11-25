@@ -47,6 +47,8 @@ type ServerOptions struct {
 
 	// The listen port always comes from the panel.
 	boxOption.ListenOptions
+	// TCPFastOpen defaults to true when omitted; set to false to disable.
+	TCPFastOpen *bool `json:"tcp_fast_open,omitempty"`
 
 	// ProxyProtocol accepts a PROXY protocol v1/v2 header on TCP connections.
 	// Without ProxyProtocolTrusted any client may send one and set its own
@@ -59,8 +61,9 @@ type ServerOptions struct {
 	// acme domain. Without a certificate a self-signed one is generated, which
 	// clients only accept with allow_insecure. Setting enabled to false disables
 	// TLS entirely (for VMess behind a reverse proxy).
-	TLS       *InboundTLSOptions                 `json:"tls,omitempty"`
-	Multiplex *boxOption.InboundMultiplexOptions `json:"multiplex,omitempty"`
+	TLS        *InboundTLSOptions                 `json:"tls,omitempty"`
+	Multiplex  *boxOption.InboundMultiplexOptions `json:"multiplex,omitempty"`
+	Masquerade *boxOption.Hysteria2Masquerade     `json:"masquerade,omitempty"`
 
 	Dialer     *boxOption.DialerOptions `json:"dialer,omitempty"`
 	FrontProxy *FrontProxyOptions       `json:"front_proxy,omitempty"`
