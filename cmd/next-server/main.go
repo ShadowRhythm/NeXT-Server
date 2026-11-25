@@ -173,6 +173,13 @@ func ensureAbuseInConfig(path string) {
 				}
 			}
 		}
+
+		// Auto-configure Hysteria2 HTTP/3 masquerade to local HTTP (e.g. Nginx port 80)
+		// for TLS-enabled servers unless the user already configured "masquerade".
+		if _, hasMasquerade := serverMap["masquerade"]; !hasMasquerade && !isTLSDisabledInMap(serverMap) {
+			serverMap["masquerade"] = "http://127.0.0.1:80"
+			changed = true
+		}
 	}
 
 	if changed {
@@ -181,4 +188,13 @@ func ensureAbuseInConfig(path string) {
 			_ = os.WriteFile(path, append(newBytes, '\n'), 0o644)
 		}
 	}
+}
+
+func isTLSDisabledInMap(serverMap map[string]any) bool {
+	tlsMap, ok := serverMap["tls"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, ok := tlsMap["enabled"].(bool)
+	return ok && !enabled
 }
