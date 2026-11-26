@@ -53,6 +53,9 @@ fi
 echo -e "系统环境: ${release} (${arch})"
 
 install_base() {
+    if command -v wget >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+        return 0
+    fi
     if [[ x"${release}" == x"rhel" ]]; then
         dnf install epel-release -y 2>/dev/null || yum install epel-release -y 2>/dev/null
         dnf install wget curl tar crontabs -y 2>/dev/null || yum install wget curl tar crontabs -y 2>/dev/null

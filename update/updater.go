@@ -49,23 +49,6 @@ func Do(ctx context.Context, repo string) error {
 		return fmt.Errorf("no asset for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, rel.TagName)
 	}
 
-	// Download to a temp file
-	dlTmp, err := os.CreateTemp("", "next-server-dl-*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	dlTmpName := dlTmp.Name()
-	defer os.Remove(dlTmpName)
-
-	if err := downloadTo(ctx, downloadURL, dlTmp); err != nil {
-		dlTmp.Close()
-		return fmt.Errorf("download: %w", err)
-	}
-	if _, err := dlTmp.Seek(0, io.SeekStart); err != nil {
-		dlTmp.Close()
-		return err
-	}
-
 	// Resolve the current executable path (follow symlinks)
 	exePath, err := os.Executable()
 	if err != nil {
@@ -77,35 +60,30 @@ func Do(ctx context.Context, repo string) error {
 	}
 	exeDir := filepath.Dir(exePath)
 
-	// Extract binary to a temp file in the same directory as exePath
-	// so that os.Rename is an atomic operation on the same filesystem.
+	// Stream download + extraction directly to a temp file in the same directory
+	// as exePath so os.Rename is atomic on the same filesystem without touching /tmp.
 	binTmp, err := os.CreateTemp(exeDir, ".next-server-bin-*")
 	if err != nil {
 		// Fallback to default temp dir if exeDir is not writable for temp files
 		binTmp, err = os.CreateTemp("", "next-server-bin-*")
 		if err != nil {
-			dlTmp.Close()
 			return fmt.Errorf("create binary temp: %w", err)
 		}
 	}
 	binTmpName := binTmp.Name()
 	defer os.Remove(binTmpName)
 
-	if isTar {
-		err = extractBinaryFromTarGz(dlTmp, binTmp)
-	} else {
-		_, err = io.Copy(binTmp, dlTmp)
-	}
-	dlTmp.Close()
-	if err != nil {
+	if err := downloadBinary(ctx, downloadURL, isTar, binTmp); err != nil {
 		binTmp.Close()
-		return fmt.Errorf("extract binary: %w", err)
+		return err
 	}
 	if err := binTmp.Chmod(0o755); err != nil {
 		binTmp.Close()
 		return fmt.Errorf("chmod binary: %w", err)
 	}
-	binTmp.Close()
+	if err := binTmp.Close(); err != nil {
+		return fmt.Errorf("close binary temp: %w", err)
+	}
 
 	// Atomic replace: try rename first (works on same filesystem), then copy
 	if err := os.Rename(binTmpName, exePath); err != nil {
@@ -157,21 +135,33 @@ func findAsset(rel *ghRelease) (url string, isTar bool) {
 	return "", false
 }
 
-func downloadTo(ctx context.Context, url string, dst io.Writer) error {
+func downloadBinary(ctx context.Context, url string, isTar bool, dst io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
 	}
-	_, err = io.Copy(dst, resp.Body)
-	return err
+	if isTar {
+		if err := extractBinaryFromTarGz(resp.Body, dst); err != nil {
+			return fmt.Errorf("extract binary: %w", err)
+		}
+		return nil
+	}
+	n, err := io.Copy(dst, resp.Body)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	if resp.ContentLength >= 0 && n != resp.ContentLength {
+		return fmt.Errorf("download: incomplete body (%d of %d bytes)", n, resp.ContentLength)
+	}
+	return nil
 }
 
 func extractBinaryFromTarGz(r io.Reader, dst io.Writer) error {
@@ -181,10 +171,11 @@ func extractBinaryFromTarGz(r io.Reader, dst io.Writer) error {
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	found := false
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return fmt.Errorf("binary 'next-server' not found in archive")
+			break
 		}
 		if err != nil {
 			return err
@@ -194,10 +185,19 @@ func extractBinaryFromTarGz(r io.Reader, dst io.Writer) error {
 		}
 		base := filepath.Base(hdr.Name)
 		if base == "next-server" || strings.HasPrefix(base, "next-server") && !strings.Contains(base, ".") {
-			_, err = io.Copy(dst, tr)
-			return err
+			if _, err = io.Copy(dst, tr); err != nil {
+				return err
+			}
+			found = true
+			break
 		}
 	}
+	if !found {
+		return fmt.Errorf("binary 'next-server' not found in archive")
+	}
+	// Drain trailing tar padding so gzip verifies the full CRC32 and length trailer.
+	_, err = io.Copy(io.Discard, gz)
+	return err
 }
 
 func copyReplace(src, dst string) error {

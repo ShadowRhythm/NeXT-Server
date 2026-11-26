@@ -137,23 +137,54 @@ func NewServer(ctx context.Context, logger log.ContextLogger, errorReporter repo
 // Start fetches the node from the panel and serves it. A panel that cannot be
 // reached here is fatal, so a misconfigured node fails loudly.
 func (s *Server) Start() error {
-	config, err := s.api.FetchNodeConfig(s.ctx)
-	if err != nil {
-		return E.Cause(err, "fetch node config")
+	var (
+		config    *adapter.NodeConfig
+		configErr error
+		users     []adapter.User
+		usersErr  error
+		rules     []adapter.DetectRule
+		rulesErr  error
+		wg        sync.WaitGroup
+	)
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		config, configErr = s.api.FetchNodeConfig(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		users, usersErr = s.api.FetchUsers(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		rules, rulesErr = s.api.FetchDetectRules(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		s.refreshLocalAddresses()
+	}()
+	go func() {
+		defer wg.Done()
+		s.abuse.refreshSignatures(s.ctx)
+	}()
+	wg.Wait()
+
+	if configErr != nil {
+		return E.Cause(configErr, "fetch node config")
 	}
 	s.nodeConfig = config
-	users, err := s.api.FetchUsers(s.ctx)
-	if errors.Is(err, serverv1.ErrNodeUnavailable) {
-		s.logger.Warn("panel serves no users: ", err)
+	if errors.Is(usersErr, serverv1.ErrNodeUnavailable) {
+		s.logger.Warn("panel serves no users: ", usersErr)
 		users = []adapter.User{}
-	} else if err != nil {
-		return E.Cause(err, "fetch users")
+	} else if usersErr != nil {
+		return E.Cause(usersErr, "fetch users")
+	}
+	s.logError("fetch detect rules", rulesErr)
+	if rules != nil {
+		s.auditor.setRules(rules)
 	}
 	s.applyUsers(users)
-	s.pullDetectRules()
-	s.refreshLocalAddresses()
-	s.abuse.refreshSignatures(s.ctx)
-	err = s.syncNodeServer()
+	err := s.syncNodeServer()
 	if err != nil {
 		return err
 	}
@@ -232,28 +263,67 @@ func (s *Server) logError(message string, err error) {
 }
 
 func (s *Server) pullOnce() {
-	config, err := s.api.FetchNodeConfig(s.ctx)
-	s.logError("fetch node config", err)
+	var (
+		config    *adapter.NodeConfig
+		configErr error
+		users     []adapter.User
+		usersErr  error
+		rules     []adapter.DetectRule
+		rulesErr  error
+		wg        sync.WaitGroup
+	)
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		config, configErr = s.api.FetchNodeConfig(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		users, usersErr = s.api.FetchUsers(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		rules, rulesErr = s.api.FetchDetectRules(s.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		s.refreshLocalAddresses()
+	}()
+	go func() {
+		defer wg.Done()
+		s.abuse.refreshSignatures(s.ctx)
+	}()
+	wg.Wait()
+
+	s.logError("fetch node config", configErr)
 	if config != nil {
 		s.nodeConfig = config
 	}
-	err = s.syncNodeServer()
-	s.logError("update node server", err)
-	users, err := s.api.FetchUsers(s.ctx)
-	if errors.Is(err, serverv1.ErrNodeUnavailable) {
+	s.logError("fetch detect rules", rulesErr)
+	if rules != nil {
+		s.auditor.setRules(rules)
+	}
+	if errors.Is(usersErr, serverv1.ErrNodeUnavailable) {
 		if len(s.userList) > 0 {
-			s.logger.Warn("panel stopped serving users: ", err)
+			s.logger.Warn("panel stopped serving users: ", usersErr)
 		}
 		users = []adapter.User{}
 	} else {
-		s.logError("fetch users", err)
+		s.logError("fetch users", usersErr)
 	}
+
+	if s.nodeServer == nil || !sameListener(s.nodeConfig, s.runningConfig) {
+		if users != nil {
+			s.users.update(users, s.nodeConfig.SpeedLimit)
+			s.userList = users
+		}
+		s.logError("update node server", s.syncNodeServer())
+		return
+	}
+	s.logError("update node server", s.syncNodeServer())
 	if users != nil {
 		s.applyUsers(users)
 	}
-	s.pullDetectRules()
-	s.refreshLocalAddresses()
-	s.abuse.refreshSignatures(s.ctx)
 }
 
 // refreshLocalAddresses keeps the last addresses when reading them fails,
@@ -261,15 +331,6 @@ func (s *Server) pullOnce() {
 func (s *Server) refreshLocalAddresses() {
 	if s.local != nil {
 		s.logError("refresh local addresses", s.local.refresh())
-	}
-}
-
-func (s *Server) pullDetectRules() {
-	rules, err := s.api.FetchDetectRules(s.ctx)
-	// Invalid rules come with the valid ones, which still apply.
-	s.logError("fetch detect rules", err)
-	if rules != nil {
-		s.auditor.setRules(rules)
 	}
 }
 

@@ -71,7 +71,18 @@ func (l *Limits) floods() bool {
 // maxKeys bounds what one window remembers of one user. Past it, new
 // destinations go uncounted until the window ends; every threshold is far
 // below it, so a user who gets there has crossed one already.
-const maxKeys = 4096
+const (
+	maxKeys     = 4096
+	reuseMapCap = 256
+)
+
+func resetMap[K comparable, V any](m map[K]V) map[K]V {
+	if len(m) > reuseMapCap {
+		return nil
+	}
+	clear(m)
+	return m
+}
 
 // Verdict is a threshold a user crossed.
 type Verdict struct {
@@ -130,7 +141,9 @@ func (t *Tracker) Connect(limits *Limits, now time.Time, destination M.Socksaddr
 	if limits.floods() {
 		window := &t.flood
 		if now.Sub(window.start) >= limits.FloodWindow {
-			*window = floodWindow{start: now}
+			window.start = now
+			window.total = 0
+			window.destinations = resetMap(window.destinations)
 		}
 		window.total++
 		if limits.Connections > 0 && window.total > limits.Connections {
@@ -183,7 +196,9 @@ func (t *Tracker) Login(limits *Limits, now time.Time, destination M.Socksaddr) 
 	defer t.access.Unlock()
 	window := &t.login
 	if now.Sub(window.start) >= limits.LoginWindow {
-		*window = loginWindow{start: now}
+		window.start = now
+		window.hosts = resetMap(window.hosts)
+		window.destinations = resetMap(window.destinations)
 	}
 	if limits.LoginHosts > 0 {
 		if _, seen := window.hosts[host]; !seen && len(window.hosts) < maxKeys {
@@ -236,7 +251,10 @@ func (t *Tracker) Fail(limits *Limits, now time.Time, destination M.Socksaddr) (
 
 func (t *Tracker) scanWindow(limits *Limits, now time.Time) *scanWindow {
 	if now.Sub(t.scan.start) >= limits.ScanWindow {
-		t.scan = scanWindow{start: now}
+		t.scan.start = now
+		t.scan.failed = resetMap(t.scan.failed)
+		t.scan.hostPorts = resetMap(t.scan.hostPorts)
+		t.scan.ports = resetMap(t.scan.ports)
 	}
 	return &t.scan
 }

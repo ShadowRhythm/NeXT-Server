@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"slices"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -34,10 +33,12 @@ type abuseGuard struct {
 	banDuration time.Duration
 	p2p         bool
 	// blockedPorts and loginPorts are empty when the check is off.
-	blockedPorts []uint16
-	loginPorts   []uint16
-	limits       abuse.Limits
-	ruleIDs      [abuse.Kinds]int
+	blockedPorts   []uint16
+	loginPorts     []uint16
+	blockedPortSet *portSet
+	loginPortSet   *portSet
+	limits         abuse.Limits
+	ruleIDs        [abuse.Kinds]int
 	// signatures holds the exploit and mining signatures of the enabled kinds.
 	signatures *signatureSet
 
@@ -91,6 +92,7 @@ func newAbuseGuard(options *option.AbuseOptions, logger log.ContextLogger, audit
 		if guard.blockedPorts == nil {
 			guard.blockedPorts = constant.DefaultBlockedPorts
 		}
+		guard.blockedPortSet = newPortSet(guard.blockedPorts)
 	}
 	if !options.PortScan.Disabled {
 		guard.limits.ScanWindow = orDefault(time.Duration(options.PortScan.Window), constant.DefaultPortScanWindow)
@@ -107,6 +109,7 @@ func newAbuseGuard(options *option.AbuseOptions, logger log.ContextLogger, audit
 		if guard.loginPorts == nil {
 			guard.loginPorts = constant.DefaultLoginPorts
 		}
+		guard.loginPortSet = newPortSet(guard.loginPorts)
 		guard.limits.LoginWindow = orDefault(time.Duration(options.BruteForce.Window), constant.DefaultBruteForceWindow)
 		guard.limits.LoginHosts = orDefault(options.BruteForce.Hosts, constant.DefaultBruteForceHosts)
 		guard.limits.LoginConnectionsPerDestination = orDefault(options.BruteForce.ConnectionsPerDestination, constant.DefaultBruteForceConnectionsPerDestination)
@@ -136,6 +139,23 @@ func orDefault[T comparable](value, fallback T) T {
 	return value
 }
 
+type portSet [65536 / 8]byte
+
+func newPortSet(ports []uint16) *portSet {
+	if len(ports) == 0 {
+		return nil
+	}
+	var set portSet
+	for _, port := range ports {
+		set[port>>3] |= 1 << (port & 7)
+	}
+	return &set
+}
+
+func (s *portSet) has(port uint16) bool {
+	return s != nil && s[port>>3]&(1<<(port&7)) != 0
+}
+
 // abuseRefusal is an error that refuses a connection for abuse; the guard
 // has logged it already.
 type abuseRefusal struct{ error }
@@ -156,12 +176,12 @@ func (g *abuseGuard) admit(ctx context.Context, user *userState, network string,
 	if network != N.NetworkTCP {
 		return nil
 	}
-	if slices.Contains(g.blockedPorts, destination.Port) {
+	if g.blockedPortSet.has(destination.Port) {
 		g.hit(ctx, user, abuse.BlockedPort, "", now, destination)
 		return g.refuse("port ", destination.Port, " is blocked: ", destination)
 	}
 	verdict, crossed := user.abuse.Connect(&g.limits, now, destination)
-	if !crossed && slices.Contains(g.loginPorts, destination.Port) {
+	if !crossed && g.loginPortSet.has(destination.Port) {
 		verdict, crossed = user.abuse.Login(&g.limits, now, destination)
 	}
 	if crossed {
@@ -233,7 +253,7 @@ func (g *abuseGuard) filterPackets(ctx context.Context, user *userState, conn N.
 
 // dropsPacket returns the kind of abuse a packet is, and for P2P the protocol.
 func (g *abuseGuard) dropsPacket(destination M.Socksaddr, payload []byte) (abuse.Kind, string, bool) {
-	if slices.Contains(g.blockedPorts, destination.Port) {
+	if g.blockedPortSet.has(destination.Port) {
 		return abuse.BlockedPort, "", true
 	}
 	if g.p2p {

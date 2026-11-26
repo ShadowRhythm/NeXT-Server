@@ -15,7 +15,7 @@ LimitNOFILE=65535
 WorkingDirectory=/usr/local/next-server/
 ExecStart=/usr/local/next-server/next-server --config /etc/next-server/config.json
 Restart=on-failure
-RestartSec=30
+RestartSec=3s
 
 [Install]
 WantedBy=multi-user.target

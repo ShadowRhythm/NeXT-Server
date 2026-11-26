@@ -31,7 +31,8 @@ type userState struct {
 	uploadCounters   []*atomic.Int64
 	downloadCounters []*atomic.Int64
 	// limiter is nil when neither the user nor the node has a speed limit.
-	limiter atomic.Pointer[limit.Limiter]
+	limiter    atomic.Pointer[limit.Limiter]
+	speedLimit atomic.Uint64
 
 	access sync.Mutex
 	ips    map[netip.Addr]*ipActivity
@@ -71,6 +72,10 @@ func (u *userState) closeConnections() {
 }
 
 func (u *userState) setSpeedLimit(bytesPerSecond uint64) {
+	if u.speedLimit.Load() == bytesPerSecond {
+		return
+	}
+	u.speedLimit.Store(bytesPerSecond)
 	current := u.limiter.Load()
 	switch {
 	case bytesPerSecond == 0:
