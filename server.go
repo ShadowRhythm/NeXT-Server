@@ -462,6 +462,10 @@ func (s *Server) pushOnce() {
 func (s *Server) triggerUpgrade() bool {
 	s.logger.Info("upgrade requested by panel, downloading latest release...")
 	if err := update.Do(s.ctx, "ShadowRhythm/NeXT-Server"); err != nil {
+		if errors.Is(err, update.ErrInProgress) {
+			s.logger.Info("upgrade already in progress, skipping duplicate request")
+			return false
+		}
 		s.logger.Error("upgrade failed: ", err)
 		return false
 	}

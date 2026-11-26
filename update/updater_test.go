@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -140,5 +142,65 @@ func TestDownloadBinaryStreaming(t *testing.T) {
 	}
 	if out.String() != "raw-bin" {
 		t.Fatalf("got %q, want raw-bin", out.String())
+	}
+}
+
+func TestDownloadBinaryRetryTruncatesAndDedup(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte("partial-garbage"))
+			return
+		}
+		_, _ = w.Write([]byte("clean-final-binary"))
+	}))
+	defer srv.Close()
+
+	dst, err := os.CreateTemp(t.TempDir(), "retry-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+
+	if err := downloadBinaryWithRetry(context.Background(), srv.URL, false, dst); err != nil {
+		t.Fatalf("downloadBinaryWithRetry failed: %v", err)
+	}
+	if _, err := dst.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dst.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "clean-final-binary" {
+		t.Fatalf("got %q, want clean-final-binary", string(got))
+	}
+
+	// Verify updateMu dedup returns ErrInProgress.
+	updateMu.Lock()
+	err = Do(context.Background(), "ShadowRhythm/NeXT-Server")
+	updateMu.Unlock()
+	if !errors.Is(err, ErrInProgress) {
+		t.Fatalf("expected ErrInProgress, got %v", err)
+	}
+}
+
+func TestFetchLatestReleaseFromRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://github.com/ShadowRhythm/NeXT-Server/releases/tag/1.0.5", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	rel, err := fetchLatestReleaseFromRedirect(context.Background(), "ShadowRhythm/NeXT-Server", srv.URL, "tcp4")
+	if err != nil {
+		t.Fatalf("redirect fetch failed: %v", err)
+	}
+	if rel.TagName != "1.0.5" {
+		t.Fatalf("tag = %q, want 1.0.5", rel.TagName)
+	}
+	url, isTar := findAsset(rel)
+	if url == "" || !isTar {
+		t.Fatalf("expected tagged tar asset, got url=%q isTar=%v", url, isTar)
 	}
 }

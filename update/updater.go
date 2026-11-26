@@ -9,17 +9,30 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
-const updateTimeout = 90 * time.Second
+const (
+	updateTimeout = 5 * time.Minute
+	stallTimeout  = 30 * time.Second
+)
+
+// ErrInProgress is returned when another upgrade in the same process is
+// already running (e.g. multiple server entries receiving hb.Upgrade together).
+var ErrInProgress = errors.New("upgrade already in progress")
+
+var updateMu sync.Mutex
 
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
@@ -36,6 +49,11 @@ type ghAsset struct {
 // running binary, then returns. The caller should exit so the process manager
 // restarts it with the new binary.
 func Do(ctx context.Context, repo string) error {
+	if !updateMu.TryLock() {
+		return ErrInProgress
+	}
+	defer updateMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
@@ -73,7 +91,7 @@ func Do(ctx context.Context, repo string) error {
 	binTmpName := binTmp.Name()
 	defer os.Remove(binTmpName)
 
-	if err := downloadBinary(ctx, downloadURL, isTar, binTmp); err != nil {
+	if err := downloadBinaryWithRetry(ctx, downloadURL, isTar, binTmp); err != nil {
 		binTmp.Close()
 		return err
 	}
@@ -95,14 +113,78 @@ func Do(ctx context.Context, repo string) error {
 	return nil
 }
 
+type idleTimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *idleTimeoutConn) Read(p []byte) (int, error) {
+	if c.timeout > 0 {
+		if err := c.Conn.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(p)
+}
+
+func newUpdateClient(network string, readIdle time.Duration) *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, netw, addr string) (net.Conn, error) {
+			if network != "" {
+				netw = network
+			}
+			conn, err := dialer.DialContext(ctx, netw, addr)
+			if err != nil {
+				return nil, err
+			}
+			if readIdle > 0 {
+				return &idleTimeoutConn{Conn: conn, timeout: readIdle}, nil
+			}
+			return conn, nil
+		},
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+	}
+	return &http.Client{Transport: transport}
+}
+
 func fetchLatestRelease(ctx context.Context, repo string) (*ghRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	var apiErr error
+	for _, network := range []string{"", "tcp4"} {
+		if ctx.Err() != nil {
+			break
+		}
+		rel, err := fetchLatestReleaseFromAPI(ctx, apiURL, network)
+		if err == nil {
+			return rel, nil
+		}
+		apiErr = err
+	}
+	// Fallback to GitHub web redirect when api.github.com is rate-limited (403/429).
+	webURL := fmt.Sprintf("https://github.com/%s/releases/latest", repo)
+	if rel, err := fetchLatestReleaseFromRedirect(ctx, repo, webURL, "tcp4"); err == nil {
+		return rel, nil
+	}
+	return nil, apiErr
+}
+
+func fetchLatestReleaseFromAPI(ctx context.Context, apiURL, network string) (*ghRelease, error) {
+	client := newUpdateClient(network, stallTimeout)
+	defer client.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +197,42 @@ func fetchLatestRelease(ctx context.Context, repo string) (*ghRelease, error) {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+func fetchLatestReleaseFromRedirect(ctx context.Context, repo, webURL, network string) (*ghRelease, error) {
+	client := newUpdateClient(network, stallTimeout)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	defer client.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("GitHub releases redirect: HTTP %d", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if !strings.Contains(loc, "/releases/tag/") {
+		return nil, fmt.Errorf("unexpected redirect location: %q", loc)
+	}
+	tag := path.Base(strings.TrimSuffix(loc, "/"))
+	if tag == "" || tag == "latest" {
+		return nil, fmt.Errorf("invalid release tag in %q", loc)
+	}
+	tagged := fmt.Sprintf("next-server-%s-%s-%s.tar.gz", tag, runtime.GOOS, runtime.GOARCH)
+	return &ghRelease{
+		TagName: tag,
+		Assets: []ghAsset{{
+			Name:               tagged,
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, tagged),
+		}},
+	}, nil
 }
 
 // findAsset returns the download URL and whether it is a .tar.gz archive.
@@ -135,12 +253,43 @@ func findAsset(rel *ghRelease) (url string, isTar bool) {
 	return "", false
 }
 
+func downloadBinaryWithRetry(ctx context.Context, url string, isTar bool, dst *os.File) error {
+	var lastErr error
+	// Try default dual-stack first, then fall back to IPv4 twice in case IPv6
+	// to release-assets.githubusercontent.com is throttled/blackholed or CDN resets.
+	for i, network := range []string{"", "tcp4", "tcp4"} {
+		if ctx.Err() != nil {
+			break
+		}
+		if i > 0 {
+			if err := dst.Truncate(0); err != nil {
+				return err
+			}
+			if _, err := dst.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+		}
+		client := newUpdateClient(network, stallTimeout)
+		err := downloadBinaryWithClient(ctx, client, url, isTar, dst)
+		client.CloseIdleConnections()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return lastErr
+}
+
 func downloadBinary(ctx context.Context, url string, isTar bool, dst io.Writer) error {
+	return downloadBinaryWithClient(ctx, http.DefaultClient, url, isTar, dst)
+}
+
+func downloadBinaryWithClient(ctx context.Context, client *http.Client, url string, isTar bool, dst io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
