@@ -95,7 +95,10 @@ func TestOnlineIPs(t *testing.T) {
 	state := newUserState(context.Background(), 1)
 	start := time.Now()
 	address := netip.MustParseAddr("::ffff:1.2.3.4")
-	done := state.open(address)
+	_, done, err := state.open(address)
+	if err != nil {
+		t.Fatal("unexpected open error: ", err)
+	}
 	if ips := state.onlineIPs(start); len(ips) != 1 || ips[0] != netip.MustParseAddr("1.2.3.4") {
 		t.Fatal("active address: ", ips)
 	}
@@ -110,6 +113,125 @@ func TestOnlineIPs(t *testing.T) {
 	}
 	if ips := state.onlineIPs(time.Now().Add(time.Second)); len(ips) != 0 {
 		t.Fatal("idle address still reported: ", ips)
+	}
+}
+
+func TestUserIPLimitEvictionAndCooldown(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	state := newUserState(context.Background(), 1)
+	state.setIPLimit(2)
+
+	ip1 := netip.MustParseAddr("1.1.1.1")
+	ip2 := netip.MustParseAddr("2.2.2.2")
+	ip3 := netip.MustParseAddr("3.3.3.3")
+	ip4 := netip.MustParseAddr("4.4.4.4")
+
+	ctx1, done1, err := state.openAt(ip1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx2, _, err := state.openAt(ip2, base.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Connecting ip3 exceeds limit=2 and evicts active ip1 (oldest), placing ip1 on cooldown.
+	ctx3, done3, err := state.openAt(ip3, base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx1.Err() == nil {
+		t.Fatal("expected oldest active ip1 context to be canceled")
+	}
+	if ctx2.Err() != nil || ctx3.Err() != nil {
+		t.Fatal("expected newer active IPs to stay connected")
+	}
+	done1()
+
+	// ip1 is rejected during cooldown, then allowed again once cooldown expires.
+	if _, _, err := state.openAt(ip1, base.Add(10*time.Second)); !errors.Is(err, errIPLimitCooldown) {
+		t.Fatalf("expected cooldown error for ip1, got %v", err)
+	}
+
+	// Disconnect ip3 cleanly so it becomes active==0; ip4 should prefer evicting idle ip3 over active ip2.
+	done3()
+	_, _, err = state.openAt(ip4, base.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx2.Err() != nil {
+		t.Fatal("expected active ip2 to remain connected when idle ip3 could be evicted")
+	}
+	// Evicting an already-disconnected IP must not put it into cooldown.
+	if _, done3Again, err := state.openAt(ip3, base.Add(6*time.Second)); err != nil {
+		t.Fatalf("expected idle-evicted ip3 to reconnect without cooldown, got %v", err)
+	} else {
+		done3Again()
+	}
+
+	// After 45s cooldown, ip1 can reconnect again.
+	if _, done1Again, err := state.openAt(ip1, base.Add(48*time.Second)); err != nil {
+		t.Fatalf("expected ip1 to reconnect after cooldown, got %v", err)
+	} else {
+		done1Again()
+	}
+}
+
+func TestUserGlobalKickIPAndLowerLimit(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	state := newUserState(context.Background(), 2)
+	state.setIPLimit(3)
+
+	ip1 := netip.MustParseAddr("10.0.0.1")
+	ip2 := netip.MustParseAddr("10.0.0.2")
+
+	ctx1, done1, err := state.openAt(ip1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done1()
+	ctx2, done2, err := state.openAt(ip2, base.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done2()
+
+	// Explicit global kick cancels only ip1 and enforces cooldown.
+	state.kickIPAt(ip1, base.Add(2*time.Second), 45*time.Second)
+	if ctx1.Err() == nil {
+		t.Fatal("expected kicked ip1 to be canceled")
+	}
+	if ctx2.Err() != nil {
+		t.Fatal("expected ip2 to stay open after kicking ip1")
+	}
+	if _, _, err := state.openAt(ip1, base.Add(10*time.Second)); !errors.Is(err, errIPLimitCooldown) {
+		t.Fatalf("expected cooldown after global kick, got %v", err)
+	}
+
+	// Lowering limit from 3 -> 1 immediately evicts excess IPs.
+	_, done3, err := state.openAt(netip.MustParseAddr("10.0.0.3"), base.Add(50*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done3()
+	state.setIPLimit(1)
+	if ctx2.Err() == nil {
+		t.Fatal("expected older ip2 to be evicted when lowering ip limit to 1")
+	}
+}
+
+func TestFilterKickedOnlineDropsHeartbeatKickedIPs(t *testing.T) {
+	online := []adapter.UserOnline{
+		{UserID: 1, IP: "1.1.1.1"},
+		{UserID: 1, IP: "2.2.2.2"},
+		{UserID: 2, IP: "1.1.1.1"},
+	}
+	kicks := []adapter.UserKickIP{
+		{UserID: 1, IP: "::ffff:1.1.1.1"},
+	}
+	got := filterKickedOnline(online, kicks)
+	if len(got) != 2 || got[0].IP != "2.2.2.2" || got[1].UserID != 2 {
+		t.Fatalf("unexpected filtered online slice: %+v", got)
 	}
 }
 

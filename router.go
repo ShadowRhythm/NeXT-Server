@@ -57,12 +57,18 @@ func (s *Server) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata 
 		s.logger.DebugContext(ctx, "[", user.id, "] ", err)
 		return
 	}
-	done := user.open(metadata.Source.Addr)
+	ipCtx, done, err := user.open(metadata.Source.Addr)
+	if err != nil {
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		s.logger.DebugContext(ctx, "[", user.id, "] ", err)
+		return
+	}
 	if limiter := user.limiter.Load(); limiter != nil {
 		conn = limiter.Conn(user.ctx, conn)
 	}
 	conn = bufio.NewInt64CounterConn(conn, user.uploadCounters, user.downloadCounters)
-	stop := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
+	stopUser := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
+	stopIP := context.AfterFunc(ipCtx, func() { conn.Close() })
 	dialer := s.dialer
 	var watch *dialWatch
 	if s.abuse.watchesDials() {
@@ -74,7 +80,8 @@ func (s *Server) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata 
 		if watch != nil && err != nil && !watch.connected.Load() {
 			s.abuse.dialFailed(ctx, user, watch, destination, err)
 		}
-		stop()
+		stopIP()
+		stopUser()
 		done()
 		onClose(err)
 	})
@@ -115,7 +122,12 @@ func (s *Server) RoutePacketConnectionEx(ctx context.Context, conn N.PacketConn,
 		s.logger.DebugContext(ctx, "[", user.id, "] ", err)
 		return
 	}
-	done := user.open(metadata.Source.Addr)
+	ipCtx, done, err := user.open(metadata.Source.Addr)
+	if err != nil {
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		s.logger.DebugContext(ctx, "[", user.id, "] ", err)
+		return
+	}
 	// Innermost, so that dropped packets use up neither the speed limit nor
 	// the user's traffic.
 	conn = s.abuse.filterPackets(ctx, user, conn)
@@ -123,9 +135,11 @@ func (s *Server) RoutePacketConnectionEx(ctx context.Context, conn N.PacketConn,
 		conn = limiter.PacketConn(user.ctx, conn)
 	}
 	conn = bufio.NewInt64CounterPacketConn(conn, user.uploadCounters, nil, user.downloadCounters, nil)
-	stop := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
+	stopUser := context.AfterFunc(user.connectionContext(), func() { conn.Close() })
+	stopIP := context.AfterFunc(ipCtx, func() { conn.Close() })
 	s.connections.NewPacketConnection(ctx, s.dialer, conn, metadata, func(err error) {
-		stop()
+		stopIP()
+		stopUser()
 		done()
 		onClose(err)
 	})

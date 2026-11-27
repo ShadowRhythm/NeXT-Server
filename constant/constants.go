@@ -7,6 +7,8 @@ const (
 	DefaultPushInterval = 60 * time.Second
 	// FinalPushTimeout bounds the traffic report sent while shutting down.
 	FinalPushTimeout = 10 * time.Second
+	// DefaultIPLimitCooldown blocks a kicked IP from reconnecting briefly to prevent reconnect ping-pong.
+	DefaultIPLimitCooldown = 45 * time.Second
 )
 
 // Abuse check defaults (option.AbuseOptions).

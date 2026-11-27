@@ -89,6 +89,8 @@ type User struct {
 	Password string
 	// SpeedLimit is in bytes per second, 0 for none.
 	SpeedLimit uint64
+	// IPLimit is the maximum concurrent distinct IPs allowed, 0 for unlimited.
+	IPLimit int
 }
 
 // DetectRuleType selects what a detect rule's regex is matched against. The
@@ -126,9 +128,15 @@ type DetectLog struct {
 	RuleID int
 }
 
+type UserKickIP struct {
+	UserID int
+	IP     string
+}
+
 type HeartbeatResponse struct {
 	Upgrade bool
 	Restart bool
+	KickIPs []UserKickIP
 }
 
 // APIClient talks to the panel. The Fetch methods return (nil, nil) when the

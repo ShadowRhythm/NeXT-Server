@@ -102,3 +102,42 @@ func TestDetectRuleTypes(t *testing.T) {
 		t.Fatalf("rules: %+v", rules)
 	}
 }
+
+func TestFetchUsersIncludesIPLimitAndHeartbeatParsesKickIPs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/server/v1/users":
+			w.Write([]byte(`{"data": [
+				{"id": 1, "node_speedlimit": 10, "node_iplimit": 2, "uuid": "u1"},
+				{"id": 2, "node_speedlimit": "0", "node_iplimit": "3", "uuid": "u2"},
+				{"id": 3, "node_speedlimit": 0, "node_iplimit": -1, "uuid": "u3"}
+			]}`))
+		case "/api/server/v1/heartbeat":
+			w.Write([]byte(`{"data": "ok", "upgrade": false, "restart": false, "kick_ips": [{"user_id": 1, "ip": "1.2.3.4"}, {"user_id": 0, "ip": "9.9.9.9"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(option.ServerOptions{URL: server.URL, Key: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	users, err := client.FetchUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 3 || users[0].IPLimit != 2 || users[1].IPLimit != 3 || users[2].IPLimit != 0 {
+		t.Fatalf("unexpected users ip limits: %+v", users)
+	}
+
+	hb, err := client.Heartbeat(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hb.KickIPs) != 1 || hb.KickIPs[0].UserID != 1 || hb.KickIPs[0].IP != "1.2.3.4" {
+		t.Fatalf("unexpected heartbeat kick_ips: %+v", hb.KickIPs)
+	}
+}

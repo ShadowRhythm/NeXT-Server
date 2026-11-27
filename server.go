@@ -3,6 +3,7 @@ package nextserver
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"reflect"
 	"sync"
@@ -197,6 +198,7 @@ func (s *Server) Start() error {
 		if err != nil && !E.IsClosedOrCanceled(err) {
 			s.logger.Error("heartbeat: ", err)
 		}
+		s.applyKickIPs(hb.KickIPs)
 		if hb.Upgrade {
 			s.triggerUpgrade()
 		} else if hb.Restart {
@@ -427,6 +429,8 @@ func (s *Server) pushOnce() {
 	}
 	hb, heartbeatErr := s.api.Heartbeat(s.ctx, onlineUsers)
 	s.logError("heartbeat", heartbeatErr)
+	s.applyKickIPs(hb.KickIPs)
+	online = filterKickedOnline(online, hb.KickIPs)
 	if hb.Upgrade {
 		if s.triggerUpgrade() {
 			return
@@ -454,6 +458,44 @@ func (s *Server) pushOnce() {
 		}()
 	}
 	reportGroup.Wait()
+}
+
+func (s *Server) applyKickIPs(kickIPs []adapter.UserKickIP) {
+	for _, item := range kickIPs {
+		user := s.users.get(item.UserID)
+		if user == nil {
+			continue
+		}
+		addr, err := netip.ParseAddr(item.IP)
+		if err != nil {
+			continue
+		}
+		user.kickIP(addr, constant.DefaultIPLimitCooldown)
+	}
+}
+
+func filterKickedOnline(online []adapter.UserOnline, kickIPs []adapter.UserKickIP) []adapter.UserOnline {
+	if len(online) == 0 || len(kickIPs) == 0 {
+		return online
+	}
+	kicked := make(map[adapter.UserOnline]struct{}, len(kickIPs))
+	for _, item := range kickIPs {
+		addr, err := netip.ParseAddr(item.IP)
+		if err != nil {
+			continue
+		}
+		kicked[adapter.UserOnline{UserID: item.UserID, IP: addr.Unmap().String()}] = struct{}{}
+	}
+	if len(kicked) == 0 {
+		return online
+	}
+	filtered := online[:0]
+	for _, entry := range online {
+		if _, drop := kicked[entry]; !drop {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 // triggerUpgrade downloads the latest release and replaces the running binary,

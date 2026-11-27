@@ -227,6 +227,7 @@ func buildTransport(custom customConfig) *boxOption.V2RayTransportOptions {
 type user struct {
 	ID         int    `json:"id"`
 	SpeedLimit Number `json:"node_speedlimit"`
+	IPLimit    Number `json:"node_iplimit"`
 	Password   string `json:"passwd"`
 	UUID       string `json:"uuid"`
 }
@@ -252,11 +253,16 @@ func (c *Client) FetchUsers(ctx context.Context) ([]adapter.User, error) {
 		if it.ID <= 0 {
 			continue
 		}
+		ipLimit := int(it.IPLimit)
+		if ipLimit < 0 {
+			ipLimit = 0
+		}
 		result = append(result, adapter.User{
 			ID:         it.ID,
 			UUID:       it.UUID,
 			Password:   it.Password,
 			SpeedLimit: mbpsToBytes(float64(it.SpeedLimit)),
+			IPLimit:    ipLimit,
 		})
 	}
 	return result, nil

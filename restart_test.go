@@ -112,7 +112,10 @@ func TestGracefulRestartFlushesTrafficAndConcurrentPush(t *testing.T) {
 
 	// Normal pushOnce exercises concurrent reporting of traffic, online IPs, and detect logs.
 	u := srv.users.get(7)
-	done := u.open(netip.MustParseAddr("::ffff:203.0.113.10"))
+	_, done, err := u.open(netip.MustParseAddr("::ffff:203.0.113.10"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	u.upload.Add(1024)
 	srv.auditor.record(7, 11)
 	srv.pushOnce()

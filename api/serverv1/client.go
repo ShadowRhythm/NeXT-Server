@@ -215,12 +215,26 @@ func (c *Client) Heartbeat(ctx context.Context, onlineUsers int) (adapter.Heartb
 	var result struct {
 		Upgrade bool `json:"upgrade"`
 		Restart bool `json:"restart"`
+		KickIPs []struct {
+			UserID int    `json:"user_id"`
+			IP     string `json:"ip"`
+		} `json:"kick_ips"`
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	kickIPs := make([]adapter.UserKickIP, 0, len(result.KickIPs))
+	for _, item := range result.KickIPs {
+		if item.UserID > 0 && item.IP != "" {
+			kickIPs = append(kickIPs, adapter.UserKickIP{
+				UserID: item.UserID,
+				IP:     item.IP,
+			})
+		}
+	}
 	return adapter.HeartbeatResponse{
 		Upgrade: result.Upgrade,
 		Restart: result.Restart,
+		KickIPs: kickIPs,
 	}, nil
 }
 
